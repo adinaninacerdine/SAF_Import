@@ -1,0 +1,17 @@
+node_modules
+npm-debug.log
+.env
+.env.local
+.env.production
+uploads/*
+!uploads/.gitkeep
+logs/*
+!logs/.gitkeep
+test-data/*
+!test-data/.gitkeep
+*.log
+.git
+.gitignore
+Dockerfile
+.dockerignore
+README.md
