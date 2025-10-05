@@ -39,12 +39,115 @@ const upload = multer({
 });
 
 class ImportHandler {
-  constructor(pool) {
+  constructor(pool, agentService = null) {
     this.pool = pool;
+    this.agentService = agentService;
   }
 
   async initialize() {
     console.log('✅ ImportHandler initialisé');
+  }
+
+  /**
+   * Importe les transactions dans la table temporaire pour validation
+   */
+  async importToStaging(transactions, agenceId, userId, importSessionId) {
+    let success = 0;
+    let duplicates = 0;
+    let errors = 0;
+    let totalAmount = 0;
+    const errorDetails = [];
+
+    // Calculer le montant total du fichier
+    const totalAmountFile = transactions.reduce((sum, t) => sum + (t.montant || 0), 0);
+
+    console.log(`\n💾 Import vers table temporaire: ${transactions.length} transactions...`);
+
+    for (const trans of transactions) {
+      try {
+        // 1. Obtenir ou créer l'agent unifié
+        let agentUniqueId = null;
+        if (this.agentService && trans.effectuePar) {
+          try {
+            agentUniqueId = await this.agentService.getOrCreateAgent(
+              trans.effectuePar,
+              trans.effectuePar,
+              trans.codeAgence || agenceId
+            );
+          } catch (err) {
+            console.warn(`⚠️ Erreur déduplication agent ${trans.effectuePar}:`, err.message);
+          }
+        }
+
+        // 2. Vérifier doublon dans la table principale
+        const existing = await this.pool.request()
+          .input('codeEnvoi', sql.VarChar, trans.codeEnvoi)
+          .query('SELECT NUMERO FROM INFOSTRANSFERTPARTENAIRES WHERE CODEENVOI = @codeEnvoi');
+
+        if (existing.recordset.length > 0) {
+          duplicates++;
+          continue;
+        }
+
+        // 3. Insérer dans la table temporaire
+        await this.pool.request()
+          .input('sessionId', sql.VarChar, importSessionId)
+          .input('numero', sql.Int, trans.numero)
+          .input('codeEnvoi', sql.VarChar, trans.codeEnvoi)
+          .input('partenaire', sql.VarChar, trans.partenaire)
+          .input('montant', sql.Decimal(18, 2), trans.montant)
+          .input('commission', sql.Decimal(18, 2), trans.commission)
+          .input('taxes', sql.Decimal(18, 2), trans.taxe)
+          .input('effectuePar', sql.VarChar, trans.effectuePar)
+          .input('dateOperation', sql.DateTime, trans.dateOperation)
+          .input('beneficiaire', sql.VarChar, trans.beneficiaire)
+          .input('expediteur', sql.VarChar, trans.expediteur || '')
+          .input('codeAgence', sql.VarChar, trans.codeAgence || agenceId)
+          .input('typeOp', sql.VarChar, trans.typeOperation)
+          .input('montantTotal', sql.Decimal(18, 2), trans.montant + trans.taxe)
+          .input('agentUniqueId', sql.Int, agentUniqueId)
+          .input('userId', sql.VarChar, userId)
+          .query(`
+            INSERT INTO temp_INFOSTRANSFERTPARTENAIRES
+            (import_session_id, NUMERO, CODEENVOI, PARTENAIRETRANSF, MONTANT, COMMISSION, TAXES,
+             EFFECTUEPAR, DATEOPERATION, NOMPRENOMBENEFICIAIRE, NOMPRENOMEXPEDITEUR,
+             CODEAGENCE, TYPEOPERATION, MONTANTTOTAL, AGENT_UNIQUE_ID,
+             import_user_id, import_date, statut_validation)
+            VALUES
+            (@sessionId, @numero, @codeEnvoi, @partenaire, @montant, @commission, @taxes,
+             @effectuePar, @dateOperation, @beneficiaire, @expediteur,
+             @codeAgence, @typeOp, @montantTotal, @agentUniqueId,
+             @userId, GETDATE(), 'EN_ATTENTE')
+          `);
+
+        success++;
+        totalAmount += trans.montant || 0;
+
+        if (success % 100 === 0) {
+          console.log(`   ✓ ${success} transactions en attente de validation...`);
+        }
+
+      } catch (error) {
+        errors++;
+        if (errorDetails.length < 10) {
+          errorDetails.push({
+            transaction: trans.codeEnvoi,
+            error: error.message
+          });
+        }
+      }
+    }
+
+    return {
+      success,
+      duplicates,
+      errors,
+      totalAmount: totalAmountFile,
+      totalAmountImported: totalAmount,
+      agentsUnifies: 0,
+      errorDetails,
+      importSessionId
+    };
   }
 
   /**

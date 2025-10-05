@@ -50,13 +50,13 @@ async function initDatabase() {
   try {
     pool = await sql.connect(dbConfig);
     console.log('✅ Connecté à SQL Server');
-    
+
     // Initialiser les services
-    importHandler = new ImportHandler(pool);
-    await importHandler.initialize();
-    
     agentService = new AgentDeduplicationService(pool);
     await agentService.initialize();
+
+    importHandler = new ImportHandler(pool, agentService);
+    await importHandler.initialize();
     
     // Vérifier les tables importantes
     const tables = await pool.request().query(`
