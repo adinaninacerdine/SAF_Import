@@ -98,15 +98,24 @@ module.exports = function(pool, importHandler, authMiddleware) {
         return res.status(403).json({ error: 'Seuls les administrateurs peuvent valider' });
       }
 
-      // 1. Déplacer les transactions vers la table principale
+      // 1. Obtenir le prochain NUMERO disponible
+      const maxNumeroResult = await pool.request().query(`
+        SELECT ISNULL(MAX(NUMERO), 0) + 1 as next_numero
+        FROM INFOSTRANSFERTPARTENAIRES
+      `);
+      const startNumero = maxNumeroResult.recordset[0].next_numero;
+
+      // 2. Déplacer les transactions vers la table principale avec NUMERO généré
       const insertResult = await pool.request()
         .input('sessionId', sql.VarChar, sessionId)
+        .input('startNumero', sql.Numeric, startNumero)
         .query(`
           INSERT INTO INFOSTRANSFERTPARTENAIRES
-          (CODEENVOI, PARTENAIRETRANSF, MONTANT, COMMISSION, TAXES,
+          (NUMERO, CODEENVOI, PARTENAIRETRANSF, MONTANT, COMMISSION, TAXES,
            EFFECTUEPAR, DATEOPERATION, NOMPRENOMBENEFICIAIRE, NOMPRENOMEXPEDITEUR,
            CODEAGENCE, TYPEOPERATION, MONTANTTOTAL, AGENT_UNIQUE_ID, date_creation)
           SELECT
+            @startNumero + ROW_NUMBER() OVER (ORDER BY NUMERO) - 1,
             CODEENVOI, PARTENAIRETRANSF, MONTANT, COMMISSION, TAXES,
             EFFECTUEPAR, DATEOPERATION, NOMPRENOMBENEFICIAIRE, NOMPRENOMEXPEDITEUR,
             CODEAGENCE, TYPEOPERATION, MONTANTTOTAL, AGENT_UNIQUE_ID, GETDATE()
