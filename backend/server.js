@@ -195,8 +195,10 @@ app.get('/api/agences', authMiddleware, async (req, res) => {
         SELECT
           CODEAGENCE as code_agence,
           LIBELLEAGENCE as nom_agence,
-          CODEAGENCE as agence_id
-        FROM AGENCES
+          CODEAGENCE as agence_id,
+          TYPEAGENCE as type_agence
+        FROM AGENCES_PÄRTENAIRES_TRANSFERT
+        WHERE TYPEAGENCE IN ('MCTV', 'AGENT')
         ORDER BY CODEAGENCE
       `);
     
