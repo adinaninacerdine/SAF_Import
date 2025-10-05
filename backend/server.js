@@ -441,9 +441,6 @@ app.get('/api/templates/:partner', authMiddleware, (req, res) => {
   res.send(templates[partner] || templates['MONEYGRAM']);
 });
 
-// Routes de validation
-app.use('/api/validation', validationRoutes(pool, importHandler, authMiddleware));
-
 // Route par défaut
 app.get('/', (req, res) => {
   res.json({
@@ -466,7 +463,10 @@ app.use((err, req, res, next) => {
 // Démarrage du serveur
 async function startServer() {
   await initDatabase();
-  
+
+  // Monter les routes de validation APRÈS l'init de la DB
+  app.use('/api/validation', validationRoutes(pool, importHandler, authMiddleware));
+
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`
 ╔════════════════════════════════════════╗
