@@ -75,7 +75,7 @@ module.exports = function(pool, importHandler, authMiddleware) {
           LEFT JOIN tm_agent_mapping am ON t.AGENT_UNIQUE_ID = am.agent_unique_id
           WHERE t.import_session_id = @sessionId
             AND t.statut_validation = 'EN_ATTENTE'
-          ORDER BY t.id
+          ORDER BY t.NUMERO
         `);
 
       res.json(result.recordset);
