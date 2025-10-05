@@ -53,8 +53,8 @@ const ValidationPage = ({ token }) => {
       const details = await detailsRes.json();
       const dups = await duplicatesRes.json();
 
-      setImportDetails(details);
-      setDuplicates(dups);
+      setImportDetails(Array.isArray(details) ? details : []);
+      setDuplicates(Array.isArray(dups) ? dups : []);
       setSelectedImport(sessionId);
     } catch (err) {
       setError('Erreur lors de la récupération des détails');
