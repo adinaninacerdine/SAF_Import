@@ -222,6 +222,7 @@ const App = () => {
     const formData = new FormData();
     formData.append('file', selectedFile);
     formData.append('agenceId', selectedAgence);
+    formData.append('useValidation', 'true'); // Validation automatique
     if (selectedPartner) {
       formData.append('partnerName', selectedPartner);
     }
