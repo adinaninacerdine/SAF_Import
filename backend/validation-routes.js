@@ -204,5 +204,88 @@ module.exports = function(pool, importHandler, authMiddleware) {
     }
   });
 
+  // Historique des validations
+  router.get('/imports/history', authMiddleware, async (req, res) => {
+    try {
+      const { limit = 50, status, startDate, endDate } = req.query;
+
+      let whereClause = "WHERE statut_validation IN ('VALIDE', 'REJETE')";
+
+      if (status) {
+        whereClause += ` AND statut_validation = '${status}'`;
+      }
+
+      if (startDate) {
+        whereClause += ` AND validation_date >= '${startDate}'`;
+      }
+
+      if (endDate) {
+        whereClause += ` AND validation_date <= '${endDate}'`;
+      }
+
+      const result = await pool.request().query(`
+        SELECT
+          import_session_id,
+          import_user_id,
+          MIN(import_date) as import_date,
+          validation_user_id,
+          MIN(validation_date) as validation_date,
+          statut_validation,
+          MIN(commentaire) as commentaire,
+          COUNT(*) as nb_transactions,
+          SUM(MONTANT) as montant_total,
+          PARTENAIRETRANSF as partenaire,
+          MIN(DATEOPERATION) as date_min,
+          MAX(DATEOPERATION) as date_max
+        FROM temp_INFOSTRANSFERTPARTENAIRES
+        ${whereClause}
+        GROUP BY import_session_id, import_user_id, validation_user_id, statut_validation, PARTENAIRETRANSF
+        ORDER BY MIN(validation_date) DESC
+        OFFSET 0 ROWS FETCH NEXT ${parseInt(limit)} ROWS ONLY
+      `);
+
+      res.json(result.recordset);
+
+    } catch (error) {
+      console.error('❌ Erreur historique:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Détails des doublons pour un import
+  router.get('/imports/duplicates/:sessionId', authMiddleware, async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+
+      const result = await pool.request()
+        .input('sessionId', sql.VarChar, sessionId)
+        .query(`
+          SELECT
+            t.CODEENVOI,
+            t.MONTANT as montant_nouveau,
+            t.DATEOPERATION as date_nouveau,
+            t.EFFECTUEPAR as agent_nouveau,
+            t.NOMPRENOMEXPEDITEUR as expediteur_nouveau,
+            t.NOMPRENOMBENEFICIAIRE as beneficiaire_nouveau,
+            p.MONTANT as montant_existant,
+            p.DATEOPERATION as date_existant,
+            p.EFFECTUEPAR as agent_existant,
+            p.NOMPRENOMEXPEDITEUR as expediteur_existant,
+            p.NOMPRENOMBENEFICIAIRE as beneficiaire_existant,
+            p.date_creation as date_import_existant
+          FROM temp_INFOSTRANSFERTPARTENAIRES t
+          INNER JOIN INFOSTRANSFERTPARTENAIRES p ON t.CODEENVOI = p.CODEENVOI
+          WHERE t.import_session_id = @sessionId
+          ORDER BY t.MONTANT DESC
+        `);
+
+      res.json(result.recordset);
+
+    } catch (error) {
+      console.error('❌ Erreur doublons:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   return router;
 };

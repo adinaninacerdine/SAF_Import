@@ -7,6 +7,8 @@ const ValidationPage = ({ token }) => {
   const [pendingImports, setPendingImports] = useState([]);
   const [selectedImport, setSelectedImport] = useState(null);
   const [importDetails, setImportDetails] = useState([]);
+  const [duplicates, setDuplicates] = useState([]);
+  const [showDuplicates, setShowDuplicates] = useState(false);
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [commentaire, setCommentaire] = useState('');
@@ -39,11 +41,20 @@ const ValidationPage = ({ token }) => {
     setLoading(true);
     setError('');
     try {
-      const response = await fetch(`${API_URL}/validation/imports/pending/${sessionId}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const data = await response.json();
-      setImportDetails(data);
+      const [detailsRes, duplicatesRes] = await Promise.all([
+        fetch(`${API_URL}/validation/imports/pending/${sessionId}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        }),
+        fetch(`${API_URL}/validation/imports/duplicates/${sessionId}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        })
+      ]);
+
+      const details = await detailsRes.json();
+      const dups = await duplicatesRes.json();
+
+      setImportDetails(details);
+      setDuplicates(dups);
       setSelectedImport(sessionId);
     } catch (err) {
       setError('Erreur lors de la récupération des détails');
@@ -239,45 +250,100 @@ const ValidationPage = ({ token }) => {
                   </div>
 
                   {selectedImport === imp.import_session_id && (
-                    <div className="mt-4 pt-4 border-t border-gray-200">
-                      <h4 className="font-semibold text-gray-800 mb-3">Détails des transactions (100 premières)</h4>
-                      {loading ? (
-                        <div className="flex justify-center py-4">
-                          <Loader className="w-6 h-6 animate-spin text-blue-600" />
-                        </div>
-                      ) : (
-                        <div className="overflow-x-auto">
-                          <table className="min-w-full text-sm">
-                            <thead className="bg-gray-100">
-                              <tr>
-                                <th className="px-3 py-2 text-left">Code Envoi</th>
-                                <th className="px-3 py-2 text-left">Expéditeur</th>
-                                <th className="px-3 py-2 text-left">Bénéficiaire</th>
-                                <th className="px-3 py-2 text-right">Montant</th>
-                                <th className="px-3 py-2 text-left">Agent</th>
-                                <th className="px-3 py-2 text-left">Date</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-200">
-                              {importDetails.map((trans, idx) => (
-                                <tr key={idx} className="hover:bg-gray-50">
-                                  <td className="px-3 py-2">{trans.CODEENVOI}</td>
-                                  <td className="px-3 py-2">{trans.NOMPRENOMEXPEDITEUR}</td>
-                                  <td className="px-3 py-2">{trans.NOMPRENOMBENEFICIAIRE}</td>
-                                  <td className="px-3 py-2 text-right font-medium">{formatAmount(trans.MONTANT)}</td>
-                                  <td className="px-3 py-2">
-                                    {trans.agent_nom_unifie || trans.EFFECTUEPAR}
-                                    {trans.agent_nom_unifie && (
-                                      <span className="ml-1 text-xs text-green-600">✓</span>
-                                    )}
-                                  </td>
-                                  <td className="px-3 py-2">{formatDate(trans.DATEOPERATION)}</td>
-                                </tr>
+                    <div className="mt-4 pt-4 border-t border-gray-200 space-y-4">
+                      {/* Alertes doublons */}
+                      {duplicates.length > 0 && (
+                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                          <div className="flex items-center justify-between mb-2">
+                            <h4 className="font-semibold text-yellow-800 flex items-center">
+                              <AlertCircle className="w-5 h-5 mr-2" />
+                              ⚠️ {duplicates.length} doublon(s) détecté(s)
+                            </h4>
+                            <button
+                              onClick={() => setShowDuplicates(!showDuplicates)}
+                              className="text-sm text-yellow-700 hover:text-yellow-900 underline"
+                            >
+                              {showDuplicates ? 'Masquer' : 'Voir les détails'}
+                            </button>
+                          </div>
+                          <p className="text-sm text-yellow-700">
+                            Ces transactions existent déjà dans la base. Vérifiez avant de valider.
+                          </p>
+
+                          {showDuplicates && (
+                            <div className="mt-4 space-y-3">
+                              {duplicates.map((dup, idx) => (
+                                <div key={idx} className="bg-white border border-yellow-300 rounded p-3">
+                                  <div className="font-medium text-gray-900 mb-2">
+                                    MTCN/PIN: {dup.CODEENVOI}
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-4 text-sm">
+                                    <div className="border-r pr-4">
+                                      <p className="text-xs text-gray-500 mb-1">📥 Nouveau (fichier)</p>
+                                      <p>💰 {formatAmount(dup.montant_nouveau)} KMF</p>
+                                      <p>📅 {formatDate(dup.date_nouveau)}</p>
+                                      <p>👤 {dup.agent_nouveau}</p>
+                                      <p className="text-xs">📤 {dup.expediteur_nouveau}</p>
+                                      <p className="text-xs">📥 {dup.beneficiaire_nouveau}</p>
+                                    </div>
+                                    <div>
+                                      <p className="text-xs text-gray-500 mb-1">✅ Existant (base)</p>
+                                      <p>💰 {formatAmount(dup.montant_existant)} KMF</p>
+                                      <p>📅 {formatDate(dup.date_existant)}</p>
+                                      <p>👤 {dup.agent_existant}</p>
+                                      <p className="text-xs">📤 {dup.expediteur_existant}</p>
+                                      <p className="text-xs">📥 {dup.beneficiaire_existant}</p>
+                                      <p className="text-xs text-blue-600">Importé: {formatDate(dup.date_import_existant)}</p>
+                                    </div>
+                                  </div>
+                                </div>
                               ))}
-                            </tbody>
-                          </table>
+                            </div>
+                          )}
                         </div>
                       )}
+
+                      {/* Détails transactions */}
+                      <div>
+                        <h4 className="font-semibold text-gray-800 mb-3">Détails des transactions (100 premières)</h4>
+                        {loading ? (
+                          <div className="flex justify-center py-4">
+                            <Loader className="w-6 h-6 animate-spin text-blue-600" />
+                          </div>
+                        ) : (
+                          <div className="overflow-x-auto">
+                            <table className="min-w-full text-sm">
+                              <thead className="bg-gray-100">
+                                <tr>
+                                  <th className="px-3 py-2 text-left">Code Envoi</th>
+                                  <th className="px-3 py-2 text-left">Expéditeur</th>
+                                  <th className="px-3 py-2 text-left">Bénéficiaire</th>
+                                  <th className="px-3 py-2 text-right">Montant</th>
+                                  <th className="px-3 py-2 text-left">Agent</th>
+                                  <th className="px-3 py-2 text-left">Date</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-200">
+                                {importDetails.map((trans, idx) => (
+                                  <tr key={idx} className="hover:bg-gray-50">
+                                    <td className="px-3 py-2">{trans.CODEENVOI}</td>
+                                    <td className="px-3 py-2">{trans.NOMPRENOMEXPEDITEUR}</td>
+                                    <td className="px-3 py-2">{trans.NOMPRENOMBENEFICIAIRE}</td>
+                                    <td className="px-3 py-2 text-right font-medium">{formatAmount(trans.MONTANT)}</td>
+                                    <td className="px-3 py-2">
+                                      {trans.agent_nom_unifie || trans.EFFECTUEPAR}
+                                      {trans.agent_nom_unifie && (
+                                        <span className="ml-1 text-xs text-green-600">✓</span>
+                                      )}
+                                    </td>
+                                    <td className="px-3 py-2">{formatDate(trans.DATEOPERATION)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>

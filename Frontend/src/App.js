@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Upload, Download, Users, FileText, TrendingUp, AlertCircle, CheckCircle, Lock, LogIn, LogOut, Shield, FileCheck, Building2, Clock } from 'lucide-react';
+import { Upload, Download, Users, FileText, TrendingUp, AlertCircle, CheckCircle, Lock, LogIn, LogOut, Shield, FileCheck, Building2, Clock, History } from 'lucide-react';
 import ValidationPage from './ValidationPage';
+import HistoryPage from './HistoryPage';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3003/api';
 
@@ -307,17 +308,30 @@ const App = () => {
                 Import
               </button>
               {user?.role === 'ADMIN' && (
-                <button
-                  onClick={() => setActiveTab('validation')}
-                  className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors flex items-center ${
-                    activeTab === 'validation'
-                      ? 'border-blue-600 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                  }`}
-                >
-                  <Clock className="w-4 h-4 mr-2" />
-                  Validation
-                </button>
+                <>
+                  <button
+                    onClick={() => setActiveTab('validation')}
+                    className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors flex items-center ${
+                      activeTab === 'validation'
+                        ? 'border-blue-600 text-blue-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    }`}
+                  >
+                    <Clock className="w-4 h-4 mr-2" />
+                    Validation
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('history')}
+                    className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors flex items-center ${
+                      activeTab === 'history'
+                        ? 'border-blue-600 text-blue-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    }`}
+                  >
+                    <History className="w-4 h-4 mr-2" />
+                    Historique
+                  </button>
+                </>
               )}
             </nav>
           </div>
@@ -326,6 +340,8 @@ const App = () => {
         {/* Contenu selon l'onglet */}
         {activeTab === 'validation' && user?.role === 'ADMIN' ? (
           <ValidationPage token={token} />
+        ) : activeTab === 'history' && user?.role === 'ADMIN' ? (
+          <HistoryPage token={token} />
         ) : (
           <div className="bg-white shadow rounded-lg p-6">
             <div className="flex items-center mb-6">
