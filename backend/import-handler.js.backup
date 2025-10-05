@@ -1,0 +1,419 @@
+// import-handler.js - Gestionnaire d'import avec parsing Excel/CSV
+const ExcelJS = require('exceljs');
+const Papa = require('papaparse');
+const fs = require('fs').promises;
+const path = require('path');
+const multer = require('multer');
+const sql = require('mssql');
+
+// Configuration Multer
+const storage = multer.diskStorage({
+  destination: async (req, file, cb) => {
+    const uploadDir = process.env.UPLOAD_DIR || 'uploads';
+    try {
+      await fs.mkdir(uploadDir, { recursive: true });
+      cb(null, uploadDir);
+    } catch (error) {
+      cb(error);
+    }
+  },
+  filename: (req, file, cb) => {
+    const uniqueName = `${Date.now()}-${file.originalname}`;
+    cb(null, uniqueName);
+  }
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB
+  fileFilter: (req, file, cb) => {
+    const allowedExts = ['.xlsx', '.xls', '.csv'];
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (allowedExts.includes(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Type de fichier non supporté'));
+    }
+  }
+});
+
+class ImportHandler {
+  constructor(pool) {
+    this.pool = pool;
+    this.agentService = null;
+  }
+
+  async initialize() {
+    const AgentDeduplicationService = require('./agent-deduplication');
+    this.agentService = new AgentDeduplicationService(this.pool);
+    await this.agentService.initialize();
+    console.log(' ImportHandler initialisé');
+  }
+
+  /**
+   * Parse un fichier Excel ou CSV
+   */
+  async parseFile(filePath) {
+    const ext = path.extname(filePath).toLowerCase();
+
+    if (ext === '.csv') {
+      return this.parseCSV(filePath);
+    } else {
+      return this.parseExcel(filePath);
+    }
+  }
+
+  /**
+   * Parse un fichier CSV
+   */
+  async parseCSV(filePath) {
+    const fileContent = await fs.readFile(filePath, 'utf-8');
+
+    return new Promise((resolve, reject) => {
+      Papa.parse(fileContent, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (results) => {
+          const format = this.detectFormat(results.data[0]);
+          const transactions = results.data.map(row => this.normalizeTransaction(row, format));
+
+          resolve({
+            data: transactions,
+            format: format,
+            count: transactions.length
+          });
+        },
+        error: (error) => reject(error)
+      });
+    });
+  }
+
+  /**
+   * Parse un fichier Excel
+   */
+  async parseExcel(filePath) {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(filePath);
+
+    const worksheet = workbook.worksheets[0];
+    if (!worksheet) {
+      throw new Error('Fichier Excel vide');
+    }
+
+    const rows = [];
+    const firstRow = worksheet.getRow(1);
+
+    // Détecter si la première ligne contient des en-têtes ou des données
+    const hasHeaders = this.detectHeaders(firstRow);
+    const format = this.detectFormatExcel(firstRow, hasHeaders);
+
+    const startRow = hasHeaders ? 2 : 1;
+
+    worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+      if (rowNumber >= startRow) {
+        const rowData = {};
+        row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+          rowData[`col${colNumber}`] = cell.value;
+        });
+        rows.push(this.normalizeTransaction(rowData, format));
+      }
+    });
+
+    return {
+      data: rows,
+      format: format,
+      count: rows.length
+    };
+  }
+
+  /**
+   * Détecte si la première ligne contient des en-têtes
+   */
+  detectHeaders(row) {
+    const firstCell = row.getCell(1).value;
+
+    // Si c'est une date, pas d'en-têtes (Western Union)
+    if (firstCell instanceof Date) {
+      return false;
+    }
+
+    // Si c'est du texte, probablement des en-têtes
+    if (typeof firstCell === 'string') {
+      const text = firstCell.toString().toLowerCase();
+      const headerKeywords = ['mtcn', 'pin', 'sender', 'date', 'amount', 'beneficiary'];
+      return headerKeywords.some(keyword => text.includes(keyword));
+    }
+
+    return false;
+  }
+
+  /**
+   * Détecte le format du fichier
+   */
+  detectFormat(firstRow) {
+    if (!firstRow) return { type: 'UNKNOWN' };
+
+    const keys = Object.keys(firstRow).map(k => k.toLowerCase());
+    const values = Object.values(firstRow).map(v => v ? v.toString().toLowerCase() : '');
+    const combined = [...keys, ...values].join(' ');
+
+    if (combined.includes('mtcn')) {
+      return { type: 'MONEYGRAM', hasHeaders: true };
+    } else if (combined.includes('pin')) {
+      return { type: 'RIA', hasHeaders: true };
+    }
+
+    return { type: 'AUTO', hasHeaders: true };
+  }
+
+  detectFormatExcel(firstRow, hasHeaders) {
+    const cell1 = firstRow.getCell(1).value;
+    const cell2 = firstRow.getCell(2).value;
+
+    // Western Union: dates dans les 2 premières colonnes
+    if (cell1 instanceof Date && cell2 instanceof Date) {
+      return { type: 'WESTERN_UNION', hasHeaders: false };
+    }
+
+    // Autres formats avec en-têtes
+    if (hasHeaders) {
+      const headers = [];
+      firstRow.eachCell((cell) => {
+        if (cell.value) headers.push(cell.value.toString().toLowerCase());
+      });
+      const headersText = headers.join(' ');
+
+      if (headersText.includes('mtcn')) {
+        return { type: 'MONEYGRAM', hasHeaders: true };
+      } else if (headersText.includes('pin')) {
+        return { type: 'RIA', hasHeaders: true };
+      }
+    }
+
+    return { type: 'AUTO', hasHeaders: hasHeaders };
+  }
+
+  /**
+   * Normalise une transaction selon le format
+   */
+  normalizeTransaction(row, format) {
+    switch (format.type) {
+      case 'MONEYGRAM':
+        return this.normalizeMoneygram(row);
+      case 'RIA':
+        return this.normalizeRia(row);
+      case 'WESTERN_UNION':
+        return this.normalizeWesternUnion(row);
+      default:
+        return this.normalizeAuto(row);
+    }
+  }
+
+  normalizeMoneygram(row) {
+    return {
+      codeTransaction: row.MTCN || row.mtcn || row.col1,
+      expediteur: row['Sender Name'] || row.sender || row.col2,
+      beneficiaire: row['Receiver Name'] || row.receiver || row.col3,
+      montant: parseFloat(row['Principal Amount Paid Out'] || row.amount || row.col4 || 0),
+      commission: parseFloat(row.Commission || row.commission || row.col5 || 0),
+      dateOperation: this.parseDate(row['Date/Time Paid'] || row.date || row.col6),
+      codeAgent: row.Operator || row.operator || row.col7 || '',
+      partenaire: 'MONEYGRAM'
+    };
+  }
+
+  normalizeRia(row) {
+    return {
+      codeTransaction: row.PIN || row.pin || row.col1,
+      expediteur: row.Sender || row.sender || row.col2,
+      beneficiaire: row.Beneficiary || row.beneficiary || row.col3,
+      montant: parseFloat(row['Payout Amount'] || row.amount || row.col4 || 0),
+      commission: parseFloat(row.Commission || row.commission || row.col5 || 0),
+      dateOperation: this.parseDate(row['Paid Date'] || row.date || row.col6),
+      codeAgent: row.User || row.user || row.col7 || '',
+      partenaire: 'RIA'
+    };
+  }
+
+  normalizeWesternUnion(row) {
+    return {
+      codeTransaction: row.col3 || '',
+      expediteur: row.col5 || '',
+      beneficiaire: row.col6 || '',
+      montant: parseFloat(row.col10 || row.col8 || 0),
+      commission: 0,
+      dateOperation: this.parseDate(row.col2 || row.col1),
+      codeAgent: row.col7 || '',
+      agence: row.col4 || '',
+      partenaire: 'WESTERN_UNION'
+    };
+  }
+
+  normalizeAuto(row) {
+    // Détection automatique des colonnes
+    const values = Object.values(row);
+    return {
+      codeTransaction: values[0] || '',
+      expediteur: values[1] || '',
+      beneficiaire: values[2] || '',
+      montant: parseFloat(values[3] || 0),
+      commission: parseFloat(values[4] || 0),
+      dateOperation: this.parseDate(values[5]),
+      codeAgent: values[6] || '',
+      partenaire: 'AUTO'
+    };
+  }
+
+  /**
+   * Parse une date de différents formats
+   */
+  parseDate(value) {
+    if (!value) return new Date();
+    if (value instanceof Date) return value;
+
+    // Try parsing string
+    const parsed = new Date(value);
+    if (!isNaN(parsed.getTime())) return parsed;
+
+    return new Date();
+  }
+
+  /**
+   * Importe les transactions dans la base de données
+   */
+  async importTransactions(transactions, agenceId, userId) {
+    let successCount = 0;
+    let duplicates = 0;
+    let errors = 0;
+    let totalAmount = 0;
+    const errorDetails = [];
+    const agentsUnified = new Set();
+
+    console.log(`\n=¾ Import de ${transactions.length} transactions...`);
+
+    for (const trans of transactions) {
+      try {
+        // Vérifier si doublon
+        const existing = await this.pool.request()
+          .input('code', sql.VarChar, trans.codeTransaction)
+          .query('SELECT ID FROM INFOSTRANSFERTPARTENAIRES WHERE CODETRANSACTION = @code');
+
+        if (existing.recordset.length > 0) {
+          duplicates++;
+          continue;
+        }
+
+        // Obtenir ou créer l'agent unifié
+        const agentUniqueId = await this.agentService.getOrCreateAgent(
+          trans.codeAgent,
+          trans.codeAgent
+        );
+
+        if (agentUniqueId) {
+          agentsUnified.add(agentUniqueId);
+        }
+
+        // Déterminer le code agence final
+        const finalAgenceId = trans.agence || agenceId;
+
+        // Insérer la transaction
+        await this.pool.request()
+          .input('codeTransaction', sql.VarChar, trans.codeTransaction)
+          .input('partenaire', sql.VarChar, trans.partenaire)
+          .input('montant', sql.Decimal(18, 2), trans.montant)
+          .input('commission', sql.Decimal(18, 2), trans.commission || 0)
+          .input('effectuePar', sql.VarChar, trans.codeAgent)
+          .input('agentUniqueId', sql.Int, agentUniqueId)
+          .input('dateOperation', sql.DateTime, trans.dateOperation)
+          .input('expediteur', sql.NVarChar, trans.expediteur)
+          .input('beneficiaire', sql.NVarChar, trans.beneficiaire)
+          .input('codeAgence', sql.VarChar, finalAgenceId)
+          .input('statut', sql.VarChar, 'IMPORTE')
+          .query(`
+            INSERT INTO INFOSTRANSFERTPARTENAIRES
+            (CODETRANSACTION, PARTENAIRETRANSF, MONTANT, COMMISSION, EFFECTUEPAR,
+             AGENT_UNIQUE_ID, DATEOPERATION, EXPEDITEUR, BENEFICIAIRE, CODEAGENCE, STATUT)
+            VALUES
+            (@codeTransaction, @partenaire, @montant, @commission, @effectuePar,
+             @agentUniqueId, @dateOperation, @expediteur, @beneficiaire, @codeAgence, @statut)
+          `);
+
+        successCount++;
+        totalAmount += trans.montant || 0;
+
+      } catch (error) {
+        errors++;
+        errorDetails.push({
+          transaction: trans.codeTransaction,
+          error: error.message
+        });
+      }
+    }
+
+    return {
+      success: successCount,
+      duplicates,
+      errors,
+      totalAmount,
+      agentsUnifies: agentsUnified.size,
+      errorDetails: errorDetails.slice(0, 10) // Max 10 erreurs
+    };
+  }
+
+  /**
+   * Importe une seule transaction (pour multi-agences)
+   */
+  async importSingleTransaction(transaction, agenceId) {
+    try {
+      // Vérifier doublon
+      const existing = await this.pool.request()
+        .input('code', sql.VarChar, transaction.codeTransaction)
+        .query('SELECT ID FROM INFOSTRANSFERTPARTENAIRES WHERE CODETRANSACTION = @code');
+
+      if (existing.recordset.length > 0) {
+        return { status: 'duplicate' };
+      }
+
+      // Obtenir agent unifié
+      const agentUniqueId = await this.agentService.getOrCreateAgent(
+        transaction.codeAgent,
+        transaction.codeAgent
+      );
+
+      // Insérer
+      await this.pool.request()
+        .input('codeTransaction', sql.VarChar, transaction.codeTransaction)
+        .input('partenaire', sql.VarChar, transaction.partenaire)
+        .input('montant', sql.Decimal(18, 2), transaction.montant)
+        .input('commission', sql.Decimal(18, 2), transaction.commission || 0)
+        .input('effectuePar', sql.VarChar, transaction.codeAgent)
+        .input('agentUniqueId', sql.Int, agentUniqueId)
+        .input('dateOperation', sql.DateTime, transaction.dateOperation)
+        .input('expediteur', sql.NVarChar, transaction.expediteur)
+        .input('beneficiaire', sql.NVarChar, transaction.beneficiaire)
+        .input('codeAgence', sql.VarChar, agenceId)
+        .input('statut', sql.VarChar, 'IMPORTE')
+        .query(`
+          INSERT INTO INFOSTRANSFERTPARTENAIRES
+          (CODETRANSACTION, PARTENAIRETRANSF, MONTANT, COMMISSION, EFFECTUEPAR,
+           AGENT_UNIQUE_ID, DATEOPERATION, EXPEDITEUR, BENEFICIAIRE, CODEAGENCE, STATUT)
+          VALUES
+          (@codeTransaction, @partenaire, @montant, @commission, @effectuePar,
+           @agentUniqueId, @dateOperation, @expediteur, @beneficiaire, @codeAgence, @statut)
+        `);
+
+      return {
+        status: 'success',
+        amount: transaction.montant
+      };
+
+    } catch (error) {
+      return {
+        status: 'error',
+        error: error.message
+      };
+    }
+  }
+}
+
+module.exports = { ImportHandler, upload };
