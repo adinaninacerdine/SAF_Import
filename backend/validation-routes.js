@@ -271,19 +271,25 @@ module.exports = function(pool, importHandler, authMiddleware) {
         .query(`
           SELECT
             t.CODEENVOI,
+            t.PARTENAIRETRANSF,
             t.MONTANT as montant_nouveau,
             t.DATEOPERATION as date_nouveau,
             t.EFFECTUEPAR as agent_nouveau,
             t.NOMPRENOMEXPEDITEUR as expediteur_nouveau,
             t.NOMPRENOMBENEFICIAIRE as beneficiaire_nouveau,
+            t.TYPEOPERATION as type_nouveau,
             p.MONTANT as montant_existant,
             p.DATEOPERATION as date_existant,
             p.EFFECTUEPAR as agent_existant,
             p.NOMPRENOMEXPEDITEUR as expediteur_existant,
             p.NOMPRENOMBENEFICIAIRE as beneficiaire_existant,
+            p.TYPEOPERATION as type_existant,
             p.date_creation as date_import_existant
           FROM temp_INFOSTRANSFERTPARTENAIRES t
-          INNER JOIN INFOSTRANSFERTPARTENAIRES p ON t.CODEENVOI = p.CODEENVOI
+          INNER JOIN INFOSTRANSFERTPARTENAIRES p
+            ON t.CODEENVOI = p.CODEENVOI
+            AND t.PARTENAIRETRANSF = p.PARTENAIRETRANSF
+            AND t.DATEOPERATION = p.DATEOPERATION
           WHERE t.import_session_id = @sessionId
           ORDER BY t.MONTANT DESC
         `);

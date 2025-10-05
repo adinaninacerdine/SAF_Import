@@ -79,10 +79,20 @@ class ImportHandler {
           }
         }
 
-        // 2. Vérifier doublon dans la table principale
+        // 2. Vérifier doublon dans la table principale avec clé composite
+        // Clé: CODEENVOI + PARTENAIRE + DATE OPERATION
+        // Permet d'importer les annulations (même code, date différente)
         const existing = await this.pool.request()
           .input('codeEnvoi', sql.VarChar, trans.codeEnvoi)
-          .query('SELECT NUMERO FROM INFOSTRANSFERTPARTENAIRES WHERE CODEENVOI = @codeEnvoi');
+          .input('partenaire', sql.VarChar, trans.partenaire)
+          .input('dateOperation', sql.DateTime, trans.dateOperation)
+          .query(`
+            SELECT NUMERO
+            FROM INFOSTRANSFERTPARTENAIRES
+            WHERE CODEENVOI = @codeEnvoi
+              AND PARTENAIRETRANSF = @partenaire
+              AND DATEOPERATION = @dateOperation
+          `);
 
         if (existing.recordset.length > 0) {
           duplicates++;
@@ -172,6 +182,14 @@ class ImportHandler {
     // MoneyGram envois
     if (secondRow && secondRow.toString().includes('Rapport détaillé des transactions MoneyGram')) {
       return 'MONEYGRAM_ENVOIS';
+    }
+
+    // Western Union - Rechercher "Commission par direction" dans les 5 premières lignes
+    for (let i = 1; i <= 5; i++) {
+      const cellValue = worksheet.getRow(i).getCell(1).value;
+      if (cellValue && cellValue.toString().includes('Commission par direction')) {
+        return 'WESTERN_UNION';
+      }
     }
 
     // Résumés
@@ -396,6 +414,136 @@ class ImportHandler {
   }
 
   /**
+   * Parse fichier Western Union (Commission par direction)
+   */
+  async parseWesternUnion(filePath) {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(filePath);
+    const worksheet = workbook.worksheets[0];
+
+    const transactions = [];
+    let currentSite = null;
+    let currentSiteCode = null;
+    let isTransfertEnvoye = false; // Mode envoyé vs reçu
+
+    const parseMontantKMF = (val) => {
+      if (!val) return 0;
+      const str = val.toString().replace(/\s/g, '').replace(/,/g, '.');
+      return Math.abs(parseFloat(str) || 0);
+    };
+
+    const parseDate = (val) => {
+      if (!val) return new Date();
+      if (val instanceof Date) return val;
+
+      // Format DD/MM/YYYY
+      const match = val.toString().match(/(\d{2})\/(\d{2})\/(\d{4})/);
+      if (match) {
+        return new Date(match[3], match[2] - 1, match[1]);
+      }
+      return new Date();
+    };
+
+    worksheet.eachRow((row, rowNumber) => {
+      const col1 = row.getCell(1).value;
+      const col1Str = col1 ? col1.toString() : '';
+
+      // Détecter le type de transfert
+      if (col1Str.includes('Transferts envoyés')) {
+        isTransfertEnvoye = true;
+      } else if (col1Str.includes('Transferts reçus')) {
+        isTransfertEnvoye = false;
+      }
+
+      // Détecter le site (agence)
+      if (col1Str.includes('Site:') && col1Str.includes('(AHO')) {
+        const siteMatch = col1Str.match(/Site:\s+([^(]+)\s+\((\w+)\)/);
+        if (siteMatch) {
+          currentSite = siteMatch[1].trim();
+          currentSiteCode = siteMatch[2].trim(); // Ex: AHO060077
+
+          // Extraire les derniers chiffres comme code agence (ex: 077)
+          const agenceMatch = currentSiteCode.match(/(\d{3,4})$/);
+          if (agenceMatch) {
+            currentSiteCode = agenceMatch[1].substring(0, 3);
+          }
+        }
+      }
+
+      // Lignes de transactions: commence par une date DD/MM/YYYY
+      const dateMatch = col1Str.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+      if (dateMatch && currentSite) {
+        const dateEnvoye = parseDate(col1Str);
+
+        // Chercher MTCN (10 chiffres consécutifs)
+        let mtcnValue = null;
+        for (let colIdx = 1; colIdx <= 5; colIdx++) {
+          const cellVal = row.getCell(colIdx).value;
+          if (cellVal && typeof cellVal === 'number' && /^\d{10}$/.test(cellVal.toString())) {
+            mtcnValue = cellVal.toString();
+            break;
+          }
+        }
+
+        if (!mtcnValue) return; // Pas de MTCN trouvé
+
+        // Chercher les montants en KMF (colonnes avec montant > 1000, SAUF le MTCN)
+        let montantKMF = 0;
+        let commissionKMF = 0;
+
+        for (let colIdx = 1; colIdx <= 15; colIdx++) {
+          const cellVal = row.getCell(colIdx).value;
+          // Exclure le MTCN de la recherche de montants
+          if (cellVal && typeof cellVal === 'number' && cellVal > 1000 && cellVal.toString() !== mtcnValue) {
+            if (montantKMF === 0) {
+              montantKMF = cellVal; // Premier montant > 1000 = montant principal
+            } else if (commissionKMF === 0 && cellVal < montantKMF) {
+              commissionKMF = cellVal; // Montant plus petit = commission
+            }
+          }
+        }
+
+        // Chercher le pays (TURQUIE, FRANCE, MAROC, etc.)
+        let pays = '';
+        for (let colIdx = 1; colIdx <= 10; colIdx++) {
+          const cellVal = row.getCell(colIdx).value;
+          if (cellVal) {
+            const str = cellVal.toString().toUpperCase();
+            if (['FRANCE', 'TURQUIE', 'MAROC', 'SENEGAL', 'MADAGASCAR', 'CAMEROUN',
+                 'NIGER', 'TUNISIE', 'OUGANDA', 'BURKINA FASO', 'ETATS UNIS'].includes(str)) {
+              pays = str;
+              break;
+            }
+          }
+        }
+
+        if (montantKMF > 0) {
+          transactions.push({
+            numero: 0, // Sera généré automatiquement
+            codeEnvoi: mtcnValue,
+            partenaire: 'WESTERN_UNION',
+            montant: montantKMF,
+            commission: commissionKMF,
+            taxe: 0,
+            effectuePar: currentSite.substring(0, 50), // Nom du site comme agent
+            dateOperation: dateEnvoye,
+            beneficiaire: pays || '', // Pays de destination
+            expediteur: '',
+            codeAgence: currentSiteCode || '001',
+            typeOperation: isTransfertEnvoye ? 'ENVOI' : 'PAIEMENT'
+          });
+        }
+      }
+    });
+
+    return {
+      type: 'WESTERN_UNION',
+      transactions,
+      count: transactions.length
+    };
+  }
+
+  /**
    * Parse un fichier selon son type
    */
   async parseFile(filePath) {
@@ -411,6 +559,9 @@ class ImportHandler {
 
       case 'MONEYGRAM_ENVOIS':
         return await this.parseMoneygramEnvois(filePath);
+
+      case 'WESTERN_UNION':
+        return await this.parseWesternUnion(filePath);
 
       case 'MONEYGRAM_SUMMARY':
       case 'RIA_SUMMARY':
