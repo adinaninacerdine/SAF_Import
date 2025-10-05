@@ -10,6 +10,7 @@ require('dotenv').config();
 // Importer les modules personnalisés
 const { ImportHandler, upload } = require('./import-handler');
 const AgentDeduplicationService = require('./agent-deduplication');
+const validationRoutes = require('./validation-routes');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -236,28 +237,29 @@ app.get('/api/agences/:agenceId/agents', authMiddleware, async (req, res) => {
 app.post('/api/import', authMiddleware, upload.single('file'), async (req, res) => {
   console.log('\n📁 NOUVELLE REQUÊTE D\'IMPORT');
   console.log('========================================');
-  
+
   let filePath = null;
-  
+
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'Aucun fichier fourni' });
     }
-    
+
     filePath = req.file.path;
-    const { partnerName, agenceId } = req.body;
+    const { partnerName, agenceId, useValidation } = req.body;
     const userId = req.user.userId;
-    
+
     console.log(`📋 Fichier: ${req.file.originalname}`);
     console.log(`📊 Taille: ${(req.file.size / 1024).toFixed(2)} KB`);
     console.log(`📍 Agence: ${agenceId}`);
     console.log(`👤 Utilisateur: ${userId}`);
-    
+    console.log(`✅ Mode validation: ${useValidation ? 'OUI' : 'NON'}`);
+
     // Validation
     if (!agenceId) {
       return res.status(400).json({ error: 'Agence requise' });
     }
-    
+
     // Parser le fichier
     console.log('\n🔄 Analyse du fichier...');
     const parseResult = await importHandler.parseFile(filePath);
@@ -265,13 +267,32 @@ app.post('/api/import', authMiddleware, upload.single('file'), async (req, res) 
     console.log(`✅ ${parseResult.transactions.length} transactions trouvées`);
     console.log(`📊 Format détecté: ${parseResult.type || partnerName || 'AUTO'}`);
 
-    // Importer les transactions
-    console.log('\n💾 Import dans la base de données...');
-    const importResult = await importHandler.importTransactions(
-      parseResult.transactions,
-      agenceId,
-      userId
-    );
+    let importResult;
+
+    // Import avec ou sans validation
+    if (useValidation === 'true' || useValidation === true) {
+      console.log('\n📋 Import en staging (validation requise)...');
+      const { v4: uuidv4 } = require('uuid');
+      const importSessionId = uuidv4();
+
+      importResult = await importHandler.importToStaging(
+        parseResult.transactions,
+        agenceId,
+        userId,
+        importSessionId
+      );
+
+      importResult.importSessionId = importSessionId;
+      importResult.requiresValidation = true;
+    } else {
+      console.log('\n💾 Import direct dans la base de données...');
+      importResult = await importHandler.importTransactions(
+        parseResult.transactions,
+        agenceId,
+        userId
+      );
+      importResult.requiresValidation = false;
+    }
     
     // Nettoyer le fichier temporaire
     const fs = require('fs').promises;
@@ -284,7 +305,12 @@ app.post('/api/import', authMiddleware, upload.single('file'), async (req, res) 
     console.log(`❌ Erreurs: ${importResult.errors}`);
     console.log(`👥 Agents unifiés: ${importResult.agentsUnifies}`);
     console.log(`💰 Montant total: ${importResult.totalAmount.toFixed(2)}`);
-    
+
+    if (importResult.requiresValidation) {
+      console.log(`🔄 Session d'import: ${importResult.importSessionId}`);
+      console.log('⏳ En attente de validation...');
+    }
+
     res.json({
       success: true,
       totalRecords: parseResult.transactions.length,
@@ -293,7 +319,9 @@ app.post('/api/import', authMiddleware, upload.single('file'), async (req, res) 
       errors: importResult.errors,
       agentsUnifies: importResult.agentsUnifies,
       totalAmount: importResult.totalAmount,
-      errorDetails: importResult.errorDetails
+      errorDetails: importResult.errorDetails,
+      requiresValidation: importResult.requiresValidation,
+      importSessionId: importResult.importSessionId
     });
     
   } catch (error) {
@@ -412,6 +440,9 @@ app.get('/api/templates/:partner', authMiddleware, (req, res) => {
   res.setHeader('Content-Disposition', `attachment; filename=template_${partner}.csv`);
   res.send(templates[partner] || templates['MONEYGRAM']);
 });
+
+// Routes de validation
+app.use('/api/validation', validationRoutes(pool, importHandler, authMiddleware));
 
 // Route par défaut
 app.get('/', (req, res) => {

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Upload, Download, Users, FileText, TrendingUp, AlertCircle, CheckCircle, Lock, LogIn, LogOut, Shield, FileCheck, Building2 } from 'lucide-react';
+import { Upload, Download, Users, FileText, TrendingUp, AlertCircle, CheckCircle, Lock, LogIn, LogOut, Shield, FileCheck, Building2, Clock } from 'lucide-react';
+import ValidationPage from './ValidationPage';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3003/api';
 
@@ -290,11 +291,47 @@ const App = () => {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="bg-white shadow rounded-lg p-6">
-          <div className="flex items-center mb-6">
-            <FileCheck className="w-6 h-6 text-green-600 mr-2" />
-            <h2 className="text-xl font-semibold">Import Multi-Agences</h2>
+        {/* Tabs de navigation */}
+        <div className="bg-white rounded-lg shadow-sm mb-6">
+          <div className="border-b border-gray-200">
+            <nav className="flex -mb-px">
+              <button
+                onClick={() => setActiveTab('import')}
+                className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors flex items-center ${
+                  activeTab === 'import'
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                <Upload className="w-4 h-4 mr-2" />
+                Import
+              </button>
+              {user?.role === 'ADMIN' && (
+                <button
+                  onClick={() => setActiveTab('validation')}
+                  className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors flex items-center ${
+                    activeTab === 'validation'
+                      ? 'border-blue-600 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  <Clock className="w-4 h-4 mr-2" />
+                  Validation
+                </button>
+              )}
+            </nav>
           </div>
+        </div>
+
+        {/* Contenu selon l'onglet */}
+        {activeTab === 'validation' && user?.role === 'ADMIN' ? (
+          <ValidationPage token={token} />
+        ) : (
+          <div className="bg-white shadow rounded-lg p-6">
+            <div className="flex items-center mb-6">
+              <FileCheck className="w-6 h-6 text-green-600 mr-2" />
+              <h2 className="text-xl font-semibold">Import Multi-Agences</h2>
+            </div>
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
@@ -433,6 +470,7 @@ const App = () => {
             </ul>
           </div>
         </div>
+        )}
       </div>
     </div>
   );
