@@ -102,7 +102,7 @@ class ImportHandler {
         // 3. Insérer dans la table temporaire
         await this.pool.request()
           .input('sessionId', sql.VarChar, importSessionId)
-          .input('numero', sql.Int, trans.numero)
+          .input('numero', sql.Numeric(20, 0), trans.numero)
           .input('codeEnvoi', sql.VarChar, trans.codeEnvoi)
           .input('partenaire', sql.VarChar, trans.partenaire)
           .input('montant', sql.Decimal(18, 2), trans.montant)
@@ -620,7 +620,7 @@ class ImportHandler {
 
         // Vérifier doublon par NUMERO (clé primaire)
         const existingNum = await this.pool.request()
-          .input('numero', sql.Int, trans.numero)
+          .input('numero', sql.Numeric(20, 0), trans.numero)
           .query('SELECT NUMERO FROM INFOSTRANSFERTPARTENAIRES WHERE NUMERO = @numero');
 
         if (existingNum.recordset.length > 0) {
@@ -630,7 +630,7 @@ class ImportHandler {
 
         // Insérer la transaction
         await this.pool.request()
-          .input('numero', sql.Int, trans.numero)
+          .input('numero', sql.Numeric(20, 0), trans.numero)
           .input('codeEnvoi', sql.VarChar, trans.codeEnvoi)
           .input('partenaire', sql.VarChar, trans.partenaire)
           .input('montant', sql.Decimal(18, 2), trans.montant)
