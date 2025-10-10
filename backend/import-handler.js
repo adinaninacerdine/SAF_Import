@@ -563,23 +563,30 @@ class ImportHandler {
 
   /**
    * Parse un fichier selon son type
+   * @param {string} filePath - Chemin du fichier
+   * @param {string} partnerOverride - Partenaire à forcer (optionnel)
    */
-  async parseFile(filePath) {
+  async parseFile(filePath, partnerOverride = null) {
     const fileType = await this.detectFileType(filePath);
     console.log(`📊 Type détecté: ${fileType}`);
 
+    let result;
     switch (fileType) {
       case 'MONEYGRAM_DETAIL':
-        return await this.parseMoneygramDetail(filePath);
+        result = await this.parseMoneygramDetail(filePath);
+        break;
 
       case 'RIA_DETAIL':
-        return await this.parseRiaDetail(filePath);
+        result = await this.parseRiaDetail(filePath);
+        break;
 
       case 'MONEYGRAM_ENVOIS':
-        return await this.parseMoneygramEnvois(filePath);
+        result = await this.parseMoneygramEnvois(filePath);
+        break;
 
       case 'WESTERN_UNION':
-        return await this.parseWesternUnion(filePath);
+        result = await this.parseWesternUnion(filePath);
+        break;
 
       case 'MONEYGRAM_SUMMARY':
       case 'RIA_SUMMARY':
@@ -589,6 +596,18 @@ class ImportHandler {
       default:
         throw new Error('Format de fichier non reconnu');
     }
+
+    // Si un partenaire est spécifié manuellement, l'appliquer à toutes les transactions
+    if (partnerOverride && partnerOverride.trim() !== '') {
+      console.log(`🔧 Application du partenaire manuel: ${partnerOverride}`);
+      result.transactions = result.transactions.map(trans => ({
+        ...trans,
+        partenaire: partnerOverride.toUpperCase()
+      }));
+      result.type = partnerOverride.toUpperCase();
+    }
+
+    return result;
   }
 
   /**

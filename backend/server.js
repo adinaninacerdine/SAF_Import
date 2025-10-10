@@ -266,7 +266,10 @@ app.post('/api/import', authMiddleware, upload.single('file'), async (req, res) 
 
     // Parser le fichier
     console.log('\n🔄 Analyse du fichier...');
-    const parseResult = await importHandler.parseFile(filePath);
+    if (partnerName) {
+      console.log(`🎯 Partenaire sélectionné manuellement: ${partnerName}`);
+    }
+    const parseResult = await importHandler.parseFile(filePath, partnerName);
 
     console.log(`✅ ${parseResult.transactions.length} transactions trouvées`);
     console.log(`📊 Format détecté: ${parseResult.type || partnerName || 'AUTO'}`);
