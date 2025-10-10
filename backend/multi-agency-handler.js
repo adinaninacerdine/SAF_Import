@@ -125,7 +125,7 @@ class MultiAgencyHandler {
     try {
       const result = await this.pool.request()
         .input('codeAgent', sql.VarChar, agentCode)
-        .query('SELECT TOP 1 CODEAGENCE FROM UTILISATEURSl WHERE CODEUSER = @codeAgent');
+        .query('SELECT TOP 1 CODEAGENCE FROM UTILISATEURSSAF WHERE CODEUSER = @codeAgent');
 
       if (result.recordset.length > 0) {
         const agence = result.recordset[0].CODEAGENCE;

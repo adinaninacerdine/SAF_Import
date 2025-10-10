@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { CheckCircle, XCircle, Clock, Eye, AlertCircle, Loader } from 'lucide-react';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3003/api';
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001/api';
 
 const ValidationPage = ({ token }) => {
   const [pendingImports, setPendingImports] = useState([]);
@@ -28,10 +28,16 @@ const ValidationPage = ({ token }) => {
       const response = await fetch(`${API_URL}/validation/imports/pending`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
+
+      if (!response.ok) {
+        throw new Error('Erreur lors de la récupération des imports');
+      }
+
       const data = await response.json();
-      setPendingImports(data);
+      setPendingImports(Array.isArray(data) ? data : []);
     } catch (err) {
-      setError('Erreur lors de la récupération des imports');
+      setError(err.message || 'Erreur lors de la récupération des imports');
+      setPendingImports([]); // S'assurer que c'est un tableau
     } finally {
       setLoading(false);
     }

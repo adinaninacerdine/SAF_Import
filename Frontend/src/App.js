@@ -3,7 +3,7 @@ import { Upload, Download, Users, FileText, TrendingUp, AlertCircle, CheckCircle
 import ValidationPage from './ValidationPage';
 import HistoryPage from './HistoryPage';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3003/api';
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001/api';
 
 const LoginPage = ({ onLogin }) => {
   const [credentials, setCredentials] = useState({ username: '', password: '' });

@@ -88,8 +88,8 @@ class AgentDeduplicationService {
 
   async unifyExistingAgents() {
     const users = await this.pool.request().query(`
-      SELECT DISTINCT CODEUSER, NOM, CODEAGENCE 
-      FROM UTILISATEURSl 
+      SELECT DISTINCT CODEUSER, NOM, CODEAGENCE
+      FROM UTILISATEURSSAF
       WHERE NOM IS NOT NULL AND NOM != ''
       ORDER BY NOM
     `);

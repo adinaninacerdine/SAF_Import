@@ -124,7 +124,7 @@ async function initDatabase() {
     
     const stats = await pool.request().query(`
       SELECT
-        (SELECT COUNT(*) FROM UTILISATEURSl) as nb_utilisateurs,
+        (SELECT COUNT(*) FROM UTILISATEURSSAF) as nb_utilisateurs,
         (SELECT COUNT(*) FROM AGENCES) as nb_agences,
         (SELECT COUNT(*) FROM INFOSTRANSFERTPARTENAIRES) as nb_transactions,
         (SELECT COUNT(*) FROM tm_agent_mapping) as nb_agents_unifies

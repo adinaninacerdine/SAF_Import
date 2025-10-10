@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { History, CheckCircle, XCircle, Calendar, User, FileText, Filter, Loader } from 'lucide-react';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3003/api';
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001/api';
 
 const HistoryPage = ({ token }) => {
   const [history, setHistory] = useState([]);

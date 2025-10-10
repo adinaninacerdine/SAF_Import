@@ -144,6 +144,8 @@ class ImportHandler {
             transaction: trans.codeEnvoi,
             error: error.message
           });
+          // LOG DÉTAILLÉ POUR DEBUGGING
+          console.error(`❌ Erreur insertion ${trans.codeEnvoi}:`, error.message);
         }
       }
     }
@@ -249,6 +251,17 @@ class ImportHandler {
         if (!mtcn || !datePaiement) return;
         if (mtcn.toString().toLowerCase().includes('total')) return;
 
+        // Filtrer les en-têtes répétés
+        const mtcnStr = mtcn.toString().trim();
+        if (mtcnStr === '' || mtcnStr === 'Numéro du transfert') return;
+
+        // Filtrer les lignes de résumé "Succursale: ..."
+        if (mtcnStr.includes('Succursale:')) return;
+
+        // Filtrer les lignes avec bénéficiaire vide ou en-tête
+        const beneficiaireStr = beneficiaire ? beneficiaire.toString().trim() : '';
+        if (beneficiaireStr === '' || beneficiaireStr === 'Client' || beneficiaireStr === 'Bénéficiaire') return;
+
         // Parser date
         let parsedDate;
         if (datePaiement instanceof Date) {
@@ -270,11 +283,16 @@ class ImportHandler {
           return Math.abs(parseFloat(str) || 0);
         };
 
+        const montantParsed = parseMontant(montant);
+
+        // Exclure les transactions avec montant = 0 (lignes vides/résumés)
+        if (montantParsed === 0) return;
+
         transactions.push({
           numero: parseInt(numRef) || 0,
           codeEnvoi: mtcn.toString().trim(),
           partenaire: 'MONEYGRAM',
-          montant: parseMontant(montant),
+          montant: montantParsed,
           commission: parseMontant(commission),
           taxe: parseMontant(taxe),
           effectuePar: (currentGuichetier || 'INCONNU').substring(0, 50),

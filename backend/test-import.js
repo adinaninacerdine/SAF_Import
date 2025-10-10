@@ -64,7 +64,7 @@ async function checkDatabase() {
 
   // Vérifier les agents
   const agents = await pool.request().query(`
-    SELECT COUNT(*) as total FROM UTILISATEURSl
+    SELECT COUNT(*) as total FROM UTILISATEURSSAF
   `);
 
   console.log(`\n👥 Total agents: ${agents.recordset[0].total}`);

@@ -39,7 +39,9 @@ const dbConfig = {
     max: 10,
     min: 0,
     idleTimeoutMillis: 30000
-  }
+  },
+  requestTimeout: 60000, // 60 secondes pour requêtes complexes
+  connectionTimeout: 30000
 };
 
 let pool;
@@ -117,14 +119,14 @@ app.post('/api/auth/login', async (req, res) => {
     const result = await pool.request()
       .input('username', sql.VarChar, username.toUpperCase())
       .query(`
-        SELECT 
+        SELECT
           u.CODEUSER,
           u.MOTPASSE,
           u.NOM,
           u.CODEAGENCE,
-          a.LIBELLEAGENCE as nom_agence
-        FROM UTILISATEURSl u
-        LEFT JOIN AGENCES a ON u.CODEAGENCE = a.CODEAGENCE
+          a.DES_AGENCIA as nom_agence
+        FROM UTILISATEURSSAF u
+        LEFT JOIN CF.CF_AGENCIAS a ON u.CODEAGENCE = a.COD_AGENCIA
         WHERE UPPER(u.CODEUSER) = @username
       `);
     
@@ -193,13 +195,13 @@ app.get('/api/agences', authMiddleware, async (req, res) => {
     const result = await pool.request()
       .query(`
         SELECT
-          CODEAGENCE as code_agence,
-          LIBELLEAGENCE as nom_agence,
-          CODEAGENCE as agence_id,
-          TYPEAGENCE as type_agence
-        FROM AGENCES_PÄRTENAIRES_TRANSFERT
-        WHERE TYPEAGENCE IN ('MCTV', 'AGENT')
-        ORDER BY CODEAGENCE
+          COD_AGENCIA as code_agence,
+          DES_AGENCIA as nom_agence,
+          COD_AGENCIA as agence_id,
+          TIPO_AGENCIA as type_agence
+        FROM CF.CF_AGENCIAS
+        WHERE IND_ESTADO = 'A'
+        ORDER BY COD_AGENCIA
       `);
     
     res.json(result.recordset);
@@ -220,7 +222,7 @@ app.get('/api/agences/:agenceId/agents', authMiddleware, async (req, res) => {
           u.CODEUSER as code_agent,
           u.NOM as nom_complet,
           am.agent_unique_id
-        FROM UTILISATEURSl u
+        FROM UTILISATEURSSAF u
         LEFT JOIN tm_agent_codes ac ON u.CODEUSER = ac.code_user
         LEFT JOIN tm_agent_mapping am ON ac.agent_unique_id = am.agent_unique_id
         WHERE u.CODEAGENCE = @agence_id
