@@ -12,7 +12,7 @@ const config = {
     encrypt: false,
     trustServerCertificate: true
   },
-  requestTimeout: 120000
+  requestTimeout: 300000  // 5 minutes pour requêtes complexes
 };
 
 async function generateRapport() {
@@ -92,11 +92,19 @@ async function generateRapport() {
       rapport += `Résumé des transactions pour ${partenaire} (${formatDate(dateMin)} --- ${formatDate(dateMax)})         Devise: KMF\n`;
       rapport += '\n';
       rapport += 'Agences MCTV\n';
-      rapport += 'Code\tNom\tUsager\tEnvois\tPaiements\tAnnulations\tComm.\n';
 
-      agencesPrincipales.forEach(row => {
-        rapport += `${row.Code}\t${row.Nom || ''}\t${row.Usager || ''}\t${Math.round(row.Envois)}\t${Math.round(row.Paiements)}\t${Math.round(row.Annulations)}\t${Math.round(row.Comm)}\n`;
-      });
+      // RIA n'a pas de colonne Comm. pour les agences principales
+      if (partenaire === 'RIA') {
+        rapport += 'Code\tNom\tUsager\tEnvois\tPaiements\tAnnulations\n';
+        agencesPrincipales.forEach(row => {
+          rapport += `${row.Code}\t${row.Nom || ''}\t${row.Usager || ''}\t${Math.round(row.Envois)}\t${Math.round(row.Paiements)}\t${Math.round(row.Annulations)}\n`;
+        });
+      } else {
+        rapport += 'Code\tNom\tUsager\tEnvois\tPaiements\tAnnulations\tComm.\n';
+        agencesPrincipales.forEach(row => {
+          rapport += `${row.Code}\t${row.Nom || ''}\t${row.Usager || ''}\t${Math.round(row.Envois)}\t${Math.round(row.Paiements)}\t${Math.round(row.Annulations)}\t${Math.round(row.Comm)}\n`;
+        });
+      }
 
       // Agréger les sous-agences (somme par agence, sans distinction d'usager)
       const sousAgencesAgregees = {};
