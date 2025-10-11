@@ -340,6 +340,7 @@ const ValidationPage = ({ token }) => {
                                 if (!acc[code]) {
                                   acc[code] = {
                                     code: code,
+                                    nom: trans.nom_agence || 'Nom inconnu',
                                     count: 0,
                                     montant: 0,
                                     agents: new Set()
@@ -354,10 +355,15 @@ const ValidationPage = ({ token }) => {
                               }, {});
 
                               return Object.values(agenceGroups).map((agence, idx) => (
-                                <div key={idx} className="border border-gray-200 rounded-lg p-3 bg-gray-50">
+                                <div key={idx} className="border border-gray-200 rounded-lg p-3 bg-gray-50 hover:bg-blue-50 transition-colors">
                                   <div className="flex items-center justify-between mb-2">
-                                    <span className="font-bold text-lg text-blue-700">{agence.code}</span>
-                                    <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs font-medium">
+                                    <div className="flex-1">
+                                      <div className="font-bold text-lg text-blue-700">{agence.code}</div>
+                                      <div className="text-xs text-gray-600 truncate" title={agence.nom}>
+                                        {agence.nom}
+                                      </div>
+                                    </div>
+                                    <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs font-medium ml-2">
                                       {agence.count} trans.
                                     </span>
                                   </div>
@@ -390,7 +396,7 @@ const ValidationPage = ({ token }) => {
                             <table className="min-w-full text-sm">
                               <thead className="bg-gray-100">
                                 <tr>
-                                  <th className="px-3 py-2 text-left font-semibold">Code Agence</th>
+                                  <th className="px-3 py-2 text-left font-semibold">Agence</th>
                                   <th className="px-3 py-2 text-left">Code Envoi</th>
                                   <th className="px-3 py-2 text-left">Expéditeur</th>
                                   <th className="px-3 py-2 text-left">Bénéficiaire</th>
@@ -403,25 +409,36 @@ const ValidationPage = ({ token }) => {
                                 {importDetails.map((trans, idx) => (
                                   <tr key={idx} className="hover:bg-gray-50">
                                     <td className="px-3 py-2">
-                                      <span className="font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded">
-                                        {trans.CODEAGENCE || 'N/A'}
-                                      </span>
-                                    </td>
-                                    <td className="px-3 py-2 font-mono text-xs">{trans.CODEENVOI}</td>
-                                    <td className="px-3 py-2">{trans.NOMPRENOMEXPEDITEUR}</td>
-                                    <td className="px-3 py-2">{trans.NOMPRENOMBENEFICIAIRE}</td>
-                                    <td className="px-3 py-2 text-right font-medium">{formatAmount(trans.MONTANT)}</td>
-                                    <td className="px-3 py-2">
-                                      <div className="flex items-center">
-                                        <span className="truncate max-w-[150px]" title={trans.agent_nom_unifie || trans.EFFECTUEPAR}>
-                                          {trans.agent_nom_unifie || trans.EFFECTUEPAR}
+                                      <div className="flex flex-col">
+                                        <span className="font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded text-center mb-1">
+                                          {trans.CODEAGENCE || 'N/A'}
                                         </span>
-                                        {trans.agent_nom_unifie && (
-                                          <span className="ml-1 text-xs text-green-600 flex-shrink-0">✓</span>
+                                        {trans.nom_agence && (
+                                          <span className="text-xs text-gray-600 truncate max-w-[120px]" title={trans.nom_agence}>
+                                            {trans.nom_agence}
+                                          </span>
                                         )}
                                       </div>
                                     </td>
-                                    <td className="px-3 py-2 text-xs">{formatDate(trans.DATEOPERATION)}</td>
+                                    <td className="px-3 py-2 font-mono text-xs">{trans.CODEENVOI}</td>
+                                    <td className="px-3 py-2 truncate max-w-[150px]" title={trans.NOMPRENOMEXPEDITEUR}>
+                                      {trans.NOMPRENOMEXPEDITEUR}
+                                    </td>
+                                    <td className="px-3 py-2 truncate max-w-[150px]" title={trans.NOMPRENOMBENEFICIAIRE}>
+                                      {trans.NOMPRENOMBENEFICIAIRE}
+                                    </td>
+                                    <td className="px-3 py-2 text-right font-medium">{formatAmount(trans.MONTANT)}</td>
+                                    <td className="px-3 py-2">
+                                      <div className="flex items-center">
+                                        <span className="truncate max-w-[120px]" title={trans.agent_nom_unifie || trans.EFFECTUEPAR}>
+                                          {trans.agent_nom_unifie || trans.EFFECTUEPAR}
+                                        </span>
+                                        {trans.agent_nom_unifie && (
+                                          <span className="ml-1 text-xs text-green-600 flex-shrink-0" title="Agent unifié">✓</span>
+                                        )}
+                                      </div>
+                                    </td>
+                                    <td className="px-3 py-2 text-xs whitespace-nowrap">{formatDate(trans.DATEOPERATION)}</td>
                                   </tr>
                                 ))}
                               </tbody>

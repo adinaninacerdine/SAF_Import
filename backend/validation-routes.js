@@ -72,12 +72,14 @@ module.exports = function(pool, importHandler, authMiddleware) {
         .query(`
           SELECT TOP 100
             t.*,
-            am.agent_nom as agent_nom_unifie
+            am.agent_nom as agent_nom_unifie,
+            ag.DES_AGENCIA as nom_agence
           FROM temp_INFOSTRANSFERTPARTENAIRES t
           LEFT JOIN tm_agent_mapping am ON t.AGENT_UNIQUE_ID = am.agent_unique_id
+          LEFT JOIN CF.CF_AGENCIAS ag ON t.CODEAGENCE = ag.COD_AGENCIA
           WHERE t.import_session_id = @sessionId
             AND t.statut_validation = 'EN_ATTENTE'
-          ORDER BY t.NUMERO
+          ORDER BY t.CODEAGENCE, t.NUMERO
         `);
 
       res.json(result.recordset);
