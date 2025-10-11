@@ -200,7 +200,7 @@ const ValidationPage = ({ token }) => {
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex-1">
-                      <div className="flex items-center mb-2">
+                      <div className="flex items-center mb-3">
                         <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium mr-3">
                           {imp.partenaire}
                         </span>
@@ -211,7 +211,19 @@ const ValidationPage = ({ token }) => {
                           {formatDate(imp.import_date)}
                         </span>
                       </div>
-                      <div className="grid grid-cols-3 gap-4 text-sm">
+                      {imp.codes_agences && (
+                        <div className="mb-2 flex items-center">
+                          <span className="text-xs text-gray-600 mr-2">🏢 Codes agences:</span>
+                          <div className="flex flex-wrap gap-1">
+                            {imp.codes_agences.split(', ').map((code, idx) => (
+                              <span key={idx} className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded text-xs font-mono font-semibold border border-blue-200">
+                                {code}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
                         <div>
                           <span className="text-gray-600">Transactions:</span>
                           <span className="ml-2 font-semibold text-gray-800">{imp.nb_transactions}</span>
@@ -221,9 +233,13 @@ const ValidationPage = ({ token }) => {
                           <span className="ml-2 font-semibold text-gray-800">{formatAmount(imp.montant_total)} KMF</span>
                         </div>
                         <div>
+                          <span className="text-gray-600">Agences:</span>
+                          <span className="ml-2 font-semibold text-blue-600">{imp.nb_agences || 'Multiple'}</span>
+                        </div>
+                        <div>
                           <span className="text-gray-600">Période:</span>
-                          <span className="ml-2 font-semibold text-gray-800">
-                            {formatDate(imp.date_min)} - {formatDate(imp.date_max)}
+                          <span className="ml-2 font-semibold text-gray-800 text-xs">
+                            {new Date(imp.date_min).toLocaleDateString('fr-FR')} - {new Date(imp.date_max).toLocaleDateString('fr-FR')}
                           </span>
                         </div>
                       </div>
@@ -309,6 +325,59 @@ const ValidationPage = ({ token }) => {
                         </div>
                       )}
 
+                      {/* Résumé par agence */}
+                      {importDetails.length > 0 && (
+                        <div className="mb-4">
+                          <h4 className="font-semibold text-gray-800 mb-3 flex items-center">
+                            <span className="mr-2">🏢</span>
+                            Répartition par Agence
+                          </h4>
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                            {(() => {
+                              // Grouper par code agence
+                              const agenceGroups = importDetails.reduce((acc, trans) => {
+                                const code = trans.CODEAGENCE || 'NON_SPECIFIE';
+                                if (!acc[code]) {
+                                  acc[code] = {
+                                    code: code,
+                                    count: 0,
+                                    montant: 0,
+                                    agents: new Set()
+                                  };
+                                }
+                                acc[code].count++;
+                                acc[code].montant += parseFloat(trans.MONTANT || 0);
+                                if (trans.EFFECTUEPAR) {
+                                  acc[code].agents.add(trans.EFFECTUEPAR);
+                                }
+                                return acc;
+                              }, {});
+
+                              return Object.values(agenceGroups).map((agence, idx) => (
+                                <div key={idx} className="border border-gray-200 rounded-lg p-3 bg-gray-50">
+                                  <div className="flex items-center justify-between mb-2">
+                                    <span className="font-bold text-lg text-blue-700">{agence.code}</span>
+                                    <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs font-medium">
+                                      {agence.count} trans.
+                                    </span>
+                                  </div>
+                                  <div className="text-sm text-gray-700 space-y-1">
+                                    <div className="flex justify-between">
+                                      <span className="text-gray-600">Montant:</span>
+                                      <span className="font-semibold">{formatAmount(agence.montant)} KMF</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                      <span className="text-gray-600">Agents:</span>
+                                      <span className="font-semibold">{agence.agents.size}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              ));
+                            })()}
+                          </div>
+                        </div>
+                      )}
+
                       {/* Détails transactions */}
                       <div>
                         <h4 className="font-semibold text-gray-800 mb-3">Détails des transactions (100 premières)</h4>
@@ -321,6 +390,7 @@ const ValidationPage = ({ token }) => {
                             <table className="min-w-full text-sm">
                               <thead className="bg-gray-100">
                                 <tr>
+                                  <th className="px-3 py-2 text-left font-semibold">Code Agence</th>
                                   <th className="px-3 py-2 text-left">Code Envoi</th>
                                   <th className="px-3 py-2 text-left">Expéditeur</th>
                                   <th className="px-3 py-2 text-left">Bénéficiaire</th>
@@ -332,17 +402,26 @@ const ValidationPage = ({ token }) => {
                               <tbody className="divide-y divide-gray-200">
                                 {importDetails.map((trans, idx) => (
                                   <tr key={idx} className="hover:bg-gray-50">
-                                    <td className="px-3 py-2">{trans.CODEENVOI}</td>
+                                    <td className="px-3 py-2">
+                                      <span className="font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded">
+                                        {trans.CODEAGENCE || 'N/A'}
+                                      </span>
+                                    </td>
+                                    <td className="px-3 py-2 font-mono text-xs">{trans.CODEENVOI}</td>
                                     <td className="px-3 py-2">{trans.NOMPRENOMEXPEDITEUR}</td>
                                     <td className="px-3 py-2">{trans.NOMPRENOMBENEFICIAIRE}</td>
                                     <td className="px-3 py-2 text-right font-medium">{formatAmount(trans.MONTANT)}</td>
                                     <td className="px-3 py-2">
-                                      {trans.agent_nom_unifie || trans.EFFECTUEPAR}
-                                      {trans.agent_nom_unifie && (
-                                        <span className="ml-1 text-xs text-green-600">✓</span>
-                                      )}
+                                      <div className="flex items-center">
+                                        <span className="truncate max-w-[150px]" title={trans.agent_nom_unifie || trans.EFFECTUEPAR}>
+                                          {trans.agent_nom_unifie || trans.EFFECTUEPAR}
+                                        </span>
+                                        {trans.agent_nom_unifie && (
+                                          <span className="ml-1 text-xs text-green-600 flex-shrink-0">✓</span>
+                                        )}
+                                      </div>
                                     </td>
-                                    <td className="px-3 py-2">{formatDate(trans.DATEOPERATION)}</td>
+                                    <td className="px-3 py-2 text-xs">{formatDate(trans.DATEOPERATION)}</td>
                                   </tr>
                                 ))}
                               </tbody>

@@ -43,6 +43,8 @@ module.exports = function(pool, importHandler, authMiddleware) {
           MIN(import_date) as import_date,
           COUNT(*) as nb_transactions,
           SUM(MONTANT) as montant_total,
+          COUNT(DISTINCT CODEAGENCE) as nb_agences,
+          STRING_AGG(DISTINCT CODEAGENCE, ', ') as codes_agences,
           PARTENAIRETRANSF as partenaire,
           MIN(DATEOPERATION) as date_min,
           MAX(DATEOPERATION) as date_max
