@@ -436,16 +436,76 @@ app.get('/api/dashboard/stats', authMiddleware, async (req, res) => {
 // Templates
 app.get('/api/templates/:partner', authMiddleware, (req, res) => {
   const { partner } = req.params;
-  
+
   const templates = {
     'MONEYGRAM': 'MTCN,Sender Name,Receiver Name,Principal Amount Paid Out,Commission,Date/Time Paid,Operator',
     'RIA': 'PIN,Sender,Beneficiary,Payout Amount,Commission,Paid Date,User',
     'WESTERN_UNION': 'Date Creation,Date Paiement,MTCN,Agence,Expediteur,Beneficiaire,Code Agent,Montant Source,Devise,Montant Paye,Devise Paiement'
   };
-  
+
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', `attachment; filename=template_${partner}.csv`);
   res.send(templates[partner] || templates['MONEYGRAM']);
+});
+
+// ===== ROUTES POUR RAPPORTS =====
+
+// Lister tous les rapports disponibles
+app.get('/api/reports', authMiddleware, async (req, res) => {
+  try {
+    const fs = require('fs').promises;
+    const files = await fs.readdir(__dirname);
+
+    // Filtrer uniquement les fichiers rapport_*.csv et rapport_*.txt
+    const reportFiles = files.filter(f =>
+      f.startsWith('rapport_') && (f.endsWith('.csv') || f.endsWith('.txt'))
+    );
+
+    // Récupérer les métadonnées de chaque fichier
+    const reports = await Promise.all(reportFiles.map(async (filename) => {
+      const stats = await fs.stat(path.join(__dirname, filename));
+      return {
+        filename,
+        size: stats.size,
+        created: stats.birthtime,
+        modified: stats.mtime
+      };
+    }));
+
+    // Trier par date de modification (plus récent en premier)
+    reports.sort((a, b) => b.modified - a.modified);
+
+    console.log(`📊 ${reports.length} rapports trouvés`);
+    res.json(reports);
+  } catch (error) {
+    console.error('Erreur liste rapports:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Télécharger un rapport spécifique
+app.get('/api/reports/download/:filename', authMiddleware, (req, res) => {
+  const { filename } = req.params;
+
+  // Sécurité: vérifier que le fichier commence par "rapport_"
+  if (!filename.startsWith('rapport_')) {
+    return res.status(403).json({ error: 'Accès refusé' });
+  }
+
+  // Vérifier que le fichier existe et est un rapport valide
+  if (!(filename.endsWith('.csv') || filename.endsWith('.txt'))) {
+    return res.status(400).json({ error: 'Type de fichier non supporté' });
+  }
+
+  const filePath = path.join(__dirname, filename);
+  console.log(`📥 Téléchargement rapport: ${filename}`);
+
+  res.download(filePath, (err) => {
+    if (err) {
+      console.error('Erreur téléchargement:', err);
+      res.status(404).json({ error: 'Fichier non trouvé' });
+    }
+  });
 });
 
 // Route par défaut

@@ -36,3 +36,39 @@ Thumbs.db
 
 # Docker
 .dockerignore
+
+# Scripts utilitaires temporaires backend
+backend/check-*.js
+backend/diagnose-*.js
+backend/test-*.js
+backend/analyze-*.js
+backend/compare-*.js
+backend/fix-*.js
+backend/list-*.js
+backend/verify-*.js
+backend/quick-*.js
+backend/restore-*.js
+backend/setup-*.js
+backend/extract-*.js
+backend/wait-*.js
+backend/add-*.js
+
+# Scripts PowerShell et Batch utilitaires
+*.ps1
+kill-*.bat
+restart-*.bat
+
+# Rapports générés
+backend/rapport_*.csv
+backend/rapport_*.txt
+rapport_*.csv
+rapport_*.txt
+
+# Documentation temporaire de migration
+RAPPORT_*.md
+RESTORE_*.md
+DOCUMENTATION_*.md
+DATABASE_*.md
+
+# Fichier nul temporaire
+nul

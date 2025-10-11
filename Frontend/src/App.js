@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Upload, Download, Users, FileText, TrendingUp, AlertCircle, CheckCircle, Lock, LogIn, LogOut, Shield, FileCheck, Building2, Clock, History } from 'lucide-react';
 import ValidationPage from './ValidationPage';
 import HistoryPage from './HistoryPage';
+import ReportsPage from './ReportsPage';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001/api';
 
@@ -332,6 +333,17 @@ const App = () => {
                     <History className="w-4 h-4 mr-2" />
                     Historique
                   </button>
+                  <button
+                    onClick={() => setActiveTab('reports')}
+                    className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors flex items-center ${
+                      activeTab === 'reports'
+                        ? 'border-blue-600 text-blue-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    }`}
+                  >
+                    <FileText className="w-4 h-4 mr-2" />
+                    Rapports
+                  </button>
                 </>
               )}
             </nav>
@@ -343,6 +355,8 @@ const App = () => {
           <ValidationPage token={token} />
         ) : activeTab === 'history' && user?.role === 'ADMIN' ? (
           <HistoryPage token={token} />
+        ) : activeTab === 'reports' && user?.role === 'ADMIN' ? (
+          <ReportsPage />
         ) : (
           <div className="bg-white shadow rounded-lg p-6">
             <div className="flex items-center mb-6">

@@ -29,11 +29,11 @@ services:
       - DB_NAME=SAF_MCTV_COMORES
       - DB_USER=sa
       - DB_PASSWORD=Admin@123
-      - PORT=3003
+      - PORT=3001
       - JWT_SECRET=mctv-secret-key-2024-changez-moi-en-production
       - CORS_ORIGIN=http://localhost:3000
     ports:
-      - "3003:3003"
+      - "3001:3001"
     volumes:
       - ./backend:/app
       - /app/node_modules
@@ -51,7 +51,7 @@ services:
       dockerfile: Dockerfile
     container_name: mctv-frontend
     environment:
-      - REACT_APP_API_URL=http://localhost:3003/api
+      - REACT_APP_API_URL=http://localhost:3001/api
     ports:
       - "3000:80"
     depends_on:
