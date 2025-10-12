@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Upload, Download, Users, FileText, TrendingUp, AlertCircle, CheckCircle, Lock, LogIn, LogOut, Shield, FileCheck, Building2, Clock, History } from 'lucide-react';
+import { Upload, Download, Users, FileText, TrendingUp, AlertCircle, CheckCircle, Lock, LogIn, LogOut, Shield, FileCheck, Building2, Clock, History, UserCog } from 'lucide-react';
 import ValidationPage from './ValidationPage';
 import HistoryPage from './HistoryPage';
 import ReportsPage from './ReportsPage';
+import UnknownAgentsPage from './UnknownAgentsPage';
+import GlobalAgencyLinkingPage from './GlobalAgencyLinkingPage';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001/api';
 
@@ -344,6 +346,28 @@ const App = () => {
                     <FileText className="w-4 h-4 mr-2" />
                     Rapports
                   </button>
+                  <button
+                    onClick={() => setActiveTab('agents')}
+                    className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors flex items-center ${
+                      activeTab === 'agents'
+                        ? 'border-blue-600 text-blue-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    }`}
+                  >
+                    <UserCog className="w-4 h-4 mr-2" />
+                    Agents Inconnus
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('global-agency')}
+                    className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors flex items-center ${
+                      activeTab === 'global-agency'
+                        ? 'border-blue-600 text-blue-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    }`}
+                  >
+                    <Building2 className="w-4 h-4 mr-2" />
+                    Global Agences
+                  </button>
                 </>
               )}
             </nav>
@@ -357,6 +381,10 @@ const App = () => {
           <HistoryPage token={token} />
         ) : activeTab === 'reports' && user?.role === 'ADMIN' ? (
           <ReportsPage />
+        ) : activeTab === 'agents' && user?.role === 'ADMIN' ? (
+          <UnknownAgentsPage token={token} />
+        ) : activeTab === 'global-agency' && user?.role === 'ADMIN' ? (
+          <GlobalAgencyLinkingPage token={token} />
         ) : (
           <div className="bg-white shadow rounded-lg p-6">
             <div className="flex items-center mb-6">
@@ -371,28 +399,46 @@ const App = () => {
               </label>
               <select
                 value={selectedPartner}
-                onChange={(e) => setSelectedPartner(e.target.value)}
+                onChange={(e) => {
+                  setSelectedPartner(e.target.value);
+                  // Si Global est sélectionné, forcer la sélection d'une agence spécifique
+                  if (e.target.value === 'GLOBAL' && selectedAgence === 'MULTI') {
+                    setSelectedAgence('');
+                  }
+                }}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="">Détection automatique</option>
                 <option value="MONEYGRAM">MoneyGram</option>
                 <option value="RIA">RIA</option>
                 <option value="WESTERN_UNION">Western Union</option>
+                <option value="GLOBAL">Global</option>
               </select>
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Mode d'import
+                {selectedPartner === 'GLOBAL' && (
+                  <span className="ml-2 text-xs text-orange-600">
+                    (Sélection d'agence requise pour Global)
+                  </span>
+                )}
               </label>
               <select
                 value={selectedAgence}
                 onChange={(e) => setSelectedAgence(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                disabled={selectedPartner === 'GLOBAL' && agences.length === 0}
               >
-                <option value="MULTI">
-                  🏢 Toutes les agences (détection auto)
-                </option>
+                {selectedPartner !== 'GLOBAL' && (
+                  <option value="MULTI">
+                    🏢 Toutes les agences (détection auto)
+                  </option>
+                )}
+                {selectedPartner === 'GLOBAL' && (
+                  <option value="">-- Sélectionner une agence --</option>
+                )}
                 {agences.map(agence => (
                   <option key={agence.code_agence} value={agence.code_agence}>
                     {agence.nom_agence}

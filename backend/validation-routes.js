@@ -44,11 +44,18 @@ module.exports = function(pool, importHandler, authMiddleware) {
           COUNT(*) as nb_transactions,
           SUM(MONTANT) as montant_total,
           COUNT(DISTINCT CODEAGENCE) as nb_agences,
-          STRING_AGG(DISTINCT CODEAGENCE, ', ') as codes_agences,
+          STUFF((
+            SELECT DISTINCT ', ' + t2.CODEAGENCE
+            FROM temp_INFOSTRANSFERTPARTENAIRES t2
+            WHERE t2.import_session_id = t.import_session_id
+              AND t2.CODEAGENCE IS NOT NULL
+              AND t2.CODEAGENCE != ''
+            FOR XML PATH(''), TYPE
+          ).value('.', 'NVARCHAR(MAX)'), 1, 2, '') as codes_agences,
           PARTENAIRETRANSF as partenaire,
           MIN(DATEOPERATION) as date_min,
           MAX(DATEOPERATION) as date_max
-        FROM temp_INFOSTRANSFERTPARTENAIRES
+        FROM temp_INFOSTRANSFERTPARTENAIRES t
         WHERE statut_validation = 'EN_ATTENTE'
         GROUP BY import_session_id, import_user_id, PARTENAIRETRANSF
         ORDER BY MIN(import_date) DESC

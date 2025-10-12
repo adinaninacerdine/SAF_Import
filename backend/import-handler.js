@@ -1,11 +1,168 @@
 // import-handler.js - Import handler avec support MoneyGram, RIA, Western Union, Global
-// Version: 2.0 - Fix parsing montants avec virgules
+// Version: 2.1 - Fix extraction codes agence MoneyGram (mapping par nom au lieu de téléphone)
 const ExcelJS = require('exceljs');
 const Papa = require('papaparse');
 const fs = require('fs').promises;
 const path = require('path');
 const multer = require('multer');
 const sql = require('mssql');
+
+// Mapping des noms d'agence → codes (extrait de PART_NOM_AGENCES)
+// Les noms dans les fichiers MoneyGram peuvent contenir des téléphones entre parenthèses
+// Il faut matcher sur le nom AVANT les parenthèses
+const AGENCY_NAME_TO_CODE = {
+  // Agences principales (0XX)
+  'MCTV - ANJOUAN': '002',
+  'MCTV MUTSAMUDOU': '002',
+  'MCTV - CALTEX': '005',
+  'MCTV CALTEX': '005',
+  'MCTV - PHILIPS': '004',
+  'MCTV - PHILLIPS': '004',
+  'MCTV PHILIPS': '004',
+  'MCTV - DZAHANI 2': '006',
+  'MCTV DZAHANI 2': '006',
+  'MCTV - IVEMBENI': '007',
+  'MCTV IVEMBENI': '007',
+  'MCTV.IVEMBENI': '007',
+  'MCTV - OASIS': '008',
+  'MCTV OASIS': '008',
+  'MCTV-OAZIS': '008',
+  'MCTV - MANDZA': '009',
+  'MCTV MANDZA': '009',
+  'MCTV-MANDZA': '009',
+  'MCTV - CORNICHE': '010',
+  'MCTV CORNICHE': '010',
+  'MCTV - MCTV-CORNICHE': '010',
+  'MCTV-CORNICHE': '010',
+  'MCTV - MANGANI': '001',
+  'MCTV MANGANI': '001',
+  'MCTV - MCTV-MANGANI': '001',
+  'MCTV-MANGANI': '001',
+  'MCTV - MITSAMIHOULI': '013',
+  'MCTV - MCTV-MITSAMIOULI': '013',
+  'MCTV MITSAMIHOULI': '013',
+  'MCTV-MITSAMIOULI': '013',
+  'MKAZI': '011',
+  'MCTV MKAZI': '011',
+  'MCTV-MKAZI': '011',
+  'MCTV - GARD DU NORD': '012',
+  'MCTV GARD DU NORD': '012',
+  'MCTV-GARD DU NORD': '012',
+
+  // Sous-agences (1XX)
+  'CJAP': '106',
+  'CARREFOUR DES JEUNES AUTO PROMOTEURS': '106',
+  'CJAP - MCTV': '106',
+  'COOPERATIVE HAMNAMALEVU.SCOOPS': '103',
+  'FDN.SARL': '105',
+  'FEDERATION POUR LE DEVELOPPEMENT DE NVOUNAMBADANI': '105',
+  'MALEZI SAFARI SARLU': '108',
+  'MALEZI ZAFARI SARLU': '108',
+  'MALEZI SAFARI SARLU - MCTV': '108',
+  'ZUNGUDJU.COOP-CA': '107',
+  'ZUNGUDJU.COOP-CA - MCTV': '107',
+  'MCTV - KARTHALA': '110',
+  'MOUNTAZ MAHAL': '110',
+  'MSR.SARL': '111',
+  'MORONI SERVICES  RAPIDE SARL': '111',
+  'MSR.SARL - MCTV': '111',
+  'H.CON SARL': '112',
+  'MAISON FRANCE CHEZ SALIM SARLU': '112',
+  'H.CON SARL - MCTV': '112',
+  'MAGASIN RASMIA': '113',
+  'COMOROS ENTREPRENEURSHIP CORPORATION': '114',
+  'COMORES ENTREPREUNEURSHIP CORPORATION': '114',
+  'COMOROS ENTREPRENEURSHIP CORPORATION(CEN': '114',
+  'MOIFAKA MULTI-SECTORIELLES.SARL': '118',
+  'AMCO': '120',
+  'AMCO - MCTV': '120',
+  'DAHALANI GENERATION.SARL': '121',
+  'DAHALANI GENERATION.SARL - MCTV': '121',
+  'TWAMAYA YA NGOENGWE.SARL': '122',
+  'TWAMAYA YA NGOENGWE.SARL - MCTV': '122',
+  'MULTI SERVICES-D-3I.SARL': '124',
+  'MULTI SERVICES-D-3I.SARL - MCTV': '124',
+  'MWANGAZA PRODUIT.SARLU': '125',
+  'MWANGAZA PRODUIT.SARLU - MCTV': '125',
+  'COMORIAN FINANCE CONSUL SARLU': '126',
+  'COMORIAN FINANCE CONSULT SARLU': '126',
+  'COMORIAN FINANCE CONSUL SARLU - MCTV': '126',
+  'LE BON PRIX.SARL': '127',
+  'AGS SERVICES SARL': '129',
+  'REHMA SHOP.SARL': '130',
+  'MYNET.SARLU': '132',
+  'QDK': '133',
+  'COMORES FERTILIZERS.SARL': '134',
+  'MLEKEZO MALEZI.SARL': '136',
+  'MLEKEZO MALEZI.SARL - MCTV': '136',
+  'ETABLISSEMENT MARIA ABDOU FILS.SARLU': '137',
+  'ETABLISSEMENT MARIA ABDOU FILS.SARLU - M': '137',
+  'LA CENTRALE MULTI SERVICES.SARL': '140',
+  'MERVEILLE MAGASIN': '141',
+  'MERVEILLE MAGASIN - MCTV': '141',
+  'FAIT TOUT BIEN SARL': '142',
+  'FAIT TOUT BIEN.SARL': '142',
+  'FAIT TOUT BIEN SARL - MCTV': '142',
+  'MAGASIN FARES': '143',
+  'BEN MULTISERVICE SARL': '144',
+  'BEN MULTISERVICE SARL - MCTV': '144',
+  'SOCIETE DE TOURISME DE SERVICE ET D\'INVE': '145',
+  'SOCIETE DE TOURISME DE SERVICE ET D\'INVESTISSEMENT': '145',
+  'AMANI AGENCE IMMOBILIER SARL': '146',
+  'AMANI AGENCE IMMOBILIER SARL - MCTV': '146',
+  'MAGASIN DJANATHANE': '147',
+  'MAGASIN DJANATHANE - MCTV': '147',
+  'YVANIG SARLU': '148',
+  'YVANIC SARLU': '148',
+  'YVANIG SARLU - MCTV': '148',
+  'ZAINABA ABDALLAH': '149',
+  'ZAINABA ABDALLAH - MCTV': '149',
+  'NOUDJOUM SERVICE.SARL': '150',
+  'NOUDJOUM SERVICES.SARL': '150',
+  'NOUDJOUM SERVICE.SARL - MCTV': '150',
+  'EDGY AGRO.SARL': '151',
+  'AMIN MULTI-SERVICES': '152'
+};
+
+/**
+ * Normalise le nom d'agence pour matching (supprime espaces multiples, tirets, points, casse)
+ */
+function normalizeAgencyName(name) {
+  if (!name) return '';
+  return name
+    .toString()
+    .toUpperCase()
+    .trim()
+    .replace(/\s+/g, ' ')       // Espaces multiples → un seul
+    .replace(/[-\.]/g, ' ')      // Tirets et points → espaces
+    .replace(/\s+/g, ' ')        // Re-normaliser les espaces
+    .trim();
+}
+
+/**
+ * Extrait le code agence à partir du nom d'agence
+ * Utilise le mapping AGENCY_NAME_TO_CODE
+ */
+function extractAgencyCodeFromName(agencyLine) {
+  if (!agencyLine) return null;
+
+  // Extraire le nom de l'agence (tout avant les parenthèses avec numéro de téléphone)
+  // Ex: "MCTV - GARD DU NORD (75114329)" → "MCTV - GARD DU NORD"
+  const nameMatch = agencyLine.match(/^([^(]+?)(?:\s*\(\d+\))?$/);
+  if (!nameMatch) return null;
+
+  const agencyName = nameMatch[1].trim();
+  const normalized = normalizeAgencyName(agencyName);
+
+  // Chercher dans le mapping
+  for (const [key, code] of Object.entries(AGENCY_NAME_TO_CODE)) {
+    if (normalizeAgencyName(key) === normalized) {
+      return code;
+    }
+  }
+
+  return null; // Aucun match trouvé
+}
 
 // Configuration Multer
 const storage = multer.diskStorage({
@@ -166,6 +323,26 @@ class ImportHandler {
    * Détecte le type de fichier
    */
   async detectFileType(filePath) {
+    const ext = path.extname(filePath).toLowerCase();
+
+    // Pour les fichiers CSV/texte, utiliser une détection basée sur le contenu
+    if (ext === '.csv' || ext === '.txt') {
+      const content = await fs.readFile(filePath, 'utf-8');
+      const firstLine = content.split('\n')[0];
+
+      // Global: format tabulé avec colonnes spécifiques
+      // Première ligne contient les données (pas d'en-tête) avec des tabulations
+      // Format: date\tdate\tref\tagent\texp\tben\tcode\tmontant\tdevise\tmontant\tdevise
+      const tabs = (firstLine.match(/\t/g) || []).length;
+      if (tabs >= 10) {
+        // Vérifier si ça ressemble à Global (date en début de ligne au format M/D/YY)
+        if (firstLine.match(/^\d{1,2}\/\d{1,2}\/\d{2}\s+\d{1,2}:\d{2}\t/)) {
+          return 'GLOBAL';
+        }
+      }
+    }
+
+    // Pour les fichiers Excel, utiliser ExcelJS
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(filePath);
     const worksheet = workbook.worksheets[0];
@@ -383,11 +560,14 @@ class ImportHandler {
       const col1 = row.getCell(1).value;
       const col2 = row.getCell(2).value;
 
-      // Détecter l'agence (ligne contenant le nom de l'agence avec son ID)
-      if (col1 && col1.toString().includes('MCTV') && col1.toString().includes('(')) {
-        const agenceMatch = col1.toString().match(/\((\d+)\)/);
-        if (agenceMatch) {
-          currentAgence = agenceMatch[1].substring(0, 3); // Garder les 3 premiers chiffres comme code agence
+      // Détecter l'agence (ligne contenant le nom de l'agence)
+      // Ex: "MCTV - GARD DU NORD (75114329)" où (75114329) est un téléphone, PAS un code agence
+      if (col1 && col1.toString().includes('MCTV')) {
+        // Utiliser la fonction de mapping par nom
+        const extractedCode = extractAgencyCodeFromName(col1.toString());
+        if (extractedCode) {
+          currentAgence = extractedCode;
+          console.log(`  📍 Agence détectée: "${col1.toString()}" → Code: ${extractedCode}`);
         }
       }
 
@@ -562,6 +742,94 @@ class ImportHandler {
   }
 
   /**
+   * Parse fichier Global (format tabulé)
+   * Note: Global ne fournit pas de codes d'agence, l'agence doit être sélectionnée manuellement
+   */
+  async parseGlobal(filePath) {
+    const fileContent = await fs.readFile(filePath, 'utf-8');
+    const lines = fileContent.split('\n').filter(line => line.trim() !== '');
+
+    const transactions = [];
+
+    // Helper pour parser les montants avec format KMF
+    const parseMontantKMF = (val) => {
+      if (!val) return 0;
+      // Format: "49 200,00 KMF" ou "17 761,20 KMF"
+      const str = val.toString().replace(/KMF/g, '').replace(/\s/g, '').replace(/,/g, '.');
+      return Math.abs(parseFloat(str) || 0);
+    };
+
+    // Helper pour parser les dates au format "4/30/25 14:58"
+    const parseGlobalDate = (dateStr) => {
+      if (!dateStr) return new Date();
+      // Format: M/D/YY HH:mm
+      const match = dateStr.toString().trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})\s+(\d{1,2}):(\d{2})$/);
+      if (match) {
+        const month = parseInt(match[1]);
+        const day = parseInt(match[2]);
+        const year = 2000 + parseInt(match[3]);
+        const hour = parseInt(match[4]);
+        const minute = parseInt(match[5]);
+        return new Date(year, month - 1, day, hour, minute);
+      }
+      return new Date();
+    };
+
+    for (const line of lines) {
+      const cols = line.split('\t');
+
+      // Vérifier que la ligne a le bon nombre de colonnes (au moins 11)
+      if (cols.length < 11) continue;
+
+      const dateCreation = cols[0];
+      const datePaiement = cols[1];
+      const numeroRef = cols[2];
+      const agent = cols[3];
+      const expediteur = cols[4];
+      const beneficiaire = cols[5];
+      const codeInterne = cols[6];
+      const montantSource = cols[7];
+      const deviseSource = cols[8];
+      const montantPaye = cols[9];
+      const devisePaiement = cols[10];
+
+      // Filtrer les lignes d'en-tête ou invalides
+      if (!numeroRef || !datePaiement) continue;
+      if (numeroRef.includes('Date') || agent.includes('Agent')) continue;
+
+      // Vérifier que le numéro de référence est numérique
+      if (!/^\d+$/.test(numeroRef.trim())) continue;
+
+      const parsedDate = parseGlobalDate(datePaiement);
+      const montant = parseMontantKMF(montantPaye);
+
+      // Exclure les transactions avec montant = 0
+      if (montant === 0) continue;
+
+      transactions.push({
+        numero: parseInt(codeInterne) || 0,
+        codeEnvoi: numeroRef.toString().trim(),
+        partenaire: 'GLOBAL',
+        montant: montant,
+        commission: 0, // Global ne fournit pas la commission séparément
+        taxe: 0,
+        effectuePar: (agent ? agent.toString().trim() : 'INCONNU').substring(0, 50),
+        dateOperation: parsedDate,
+        beneficiaire: (beneficiaire ? beneficiaire.toString() : '').substring(0, 250),
+        expediteur: (expediteur ? expediteur.toString() : '').substring(0, 250),
+        codeAgence: null, // Sera fourni manuellement par l'utilisateur
+        typeOperation: 'PAIEMENT'
+      });
+    }
+
+    return {
+      type: 'GLOBAL',
+      transactions,
+      count: transactions.length
+    };
+  }
+
+  /**
    * Parse un fichier selon son type
    * @param {string} filePath - Chemin du fichier
    * @param {string} partnerOverride - Partenaire à forcer (optionnel)
@@ -586,6 +854,10 @@ class ImportHandler {
 
       case 'WESTERN_UNION':
         result = await this.parseWesternUnion(filePath);
+        break;
+
+      case 'GLOBAL':
+        result = await this.parseGlobal(filePath);
         break;
 
       case 'MONEYGRAM_SUMMARY':

@@ -11,6 +11,8 @@ require('dotenv').config();
 const { ImportHandler, upload } = require('./import-handler');
 const AgentDeduplicationService = require('./agent-deduplication');
 const validationRoutes = require('./validation-routes');
+const unknownAgentsRoutes = require('./unknown-agents-routes');
+const globalAgencyRoutes = require('./global-agency-routes');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -60,7 +62,11 @@ async function initDatabase() {
 
     importHandler = new ImportHandler(pool, agentService);
     await importHandler.initialize();
-    
+
+    // Rendre les services disponibles globalement via app.locals
+    app.locals.pool = pool;
+    app.locals.agentService = agentService;
+
     // Vérifier les tables importantes
     const tables = await pool.request().query(`
       SELECT TABLE_NAME 
@@ -533,6 +539,12 @@ async function startServer() {
 
   // Monter les routes de validation APRÈS l'init de la DB
   app.use('/api/validation', validationRoutes(pool, importHandler, authMiddleware));
+
+  // Monter les routes de gestion des agents inconnus
+  app.use('/api/agents', unknownAgentsRoutes(authMiddleware));
+
+  // Monter les routes de gestion des assignations agent-agence pour Global
+  app.use('/api/global', globalAgencyRoutes(authMiddleware));
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`
