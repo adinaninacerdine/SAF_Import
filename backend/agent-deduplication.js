@@ -87,94 +87,124 @@ class AgentDeduplicationService {
   }
 
   async unifyExistingAgents() {
+    // Vérifier si déjà initialisé
+    const existingCount = await this.pool.request().query(`
+      SELECT COUNT(*) as count FROM tm_agent_mapping
+    `);
+
+    if (existingCount.recordset[0].count > 0) {
+      console.log(`✅ Déduplication déjà initialisée (${existingCount.recordset[0].count} agents)`);
+      return;
+    }
+
     const users = await this.pool.request().query(`
       SELECT DISTINCT CODEUSER, NOM, CODEAGENCE
       FROM UTILISATEURSSAF
       WHERE NOM IS NOT NULL AND NOM != ''
       ORDER BY NOM
     `);
-    
+
     const nameToId = new Map();
+    let created = 0;
     let unified = 0;
-    
+
     for (const user of users.recordset) {
       const normalizedName = this.normalizeName(user.NOM);
       if (!normalizedName) continue;
-      
+
       let agentUniqueId;
-      
+
       if (nameToId.has(normalizedName)) {
+        // Agent existe déjà, réutiliser son ID
         agentUniqueId = nameToId.get(normalizedName);
         unified++;
       } else {
-        // Créer nouvel agent
-        const result = await this.pool.request()
-          .input('nom', sql.NVarChar, user.NOM)
+        // Vérifier si un agent avec ce nom normalisé existe déjà dans la table
+        const existing = await this.pool.request()
           .input('nom_normalise', sql.NVarChar, normalizedName)
           .query(`
-            INSERT INTO tm_agent_mapping (agent_nom, agent_nom_normalise)
-            VALUES (@nom, @nom_normalise);
-            SELECT SCOPE_IDENTITY() as id;
+            SELECT agent_unique_id
+            FROM tm_agent_mapping
+            WHERE agent_nom_normalise = @nom_normalise
           `);
-        
-        agentUniqueId = result.recordset[0].id;
-        nameToId.set(normalizedName, agentUniqueId);
+
+        if (existing.recordset.length > 0) {
+          // Réutiliser l'agent existant
+          agentUniqueId = existing.recordset[0].agent_unique_id;
+          nameToId.set(normalizedName, agentUniqueId);
+          unified++;
+        } else {
+          // Créer nouvel agent
+          const result = await this.pool.request()
+            .input('nom', sql.NVarChar, user.NOM)
+            .input('nom_normalise', sql.NVarChar, normalizedName)
+            .query(`
+              INSERT INTO tm_agent_mapping (agent_nom, agent_nom_normalise)
+              VALUES (@nom, @nom_normalise);
+              SELECT SCOPE_IDENTITY() as id;
+            `);
+
+          agentUniqueId = result.recordset[0].id;
+          nameToId.set(normalizedName, agentUniqueId);
+          created++;
+        }
       }
-      
-      // Ajouter le lien code -> agent
+
+      // Ajouter le lien code -> agent (seulement si pas déjà existant)
       try {
         await this.pool.request()
           .input('agent_unique_id', sql.Int, agentUniqueId)
           .input('code_user', sql.VarChar, user.CODEUSER)
           .input('code_agence', sql.VarChar, user.CODEAGENCE)
           .query(`
+            IF NOT EXISTS (SELECT 1 FROM tm_agent_codes WHERE code_user = @code_user)
             INSERT INTO tm_agent_codes (agent_unique_id, code_user, code_agence)
             VALUES (@agent_unique_id, @code_user, @code_agence)
           `);
       } catch (e) {
-        // Déjà existant
+        // Erreur si code déjà existant
       }
     }
-    
-    console.log(`✅ ${unified} agents unifiés`);
+
+    console.log(`✅ Unification terminée: ${created} agents créés, ${unified} codes unifiés`);
   }
 
-  async getOrCreateAgent(codeUser, nomAgent = null) {
+  async getOrCreateAgent(codeUser, nomAgent = null, codeAgence = '') {
     // Vérifier le cache
     if (this.agentCache.has(codeUser)) {
       return this.agentCache.get(codeUser);
     }
-    
+
     // Chercher par code
     let result = await this.pool.request()
       .input('code_user', sql.VarChar, codeUser)
       .query(`
-        SELECT agent_unique_id 
-        FROM tm_agent_codes 
+        SELECT agent_unique_id
+        FROM tm_agent_codes
         WHERE code_user = @code_user
       `);
-    
+
     if (result.recordset.length > 0) {
       const id = result.recordset[0].agent_unique_id;
       this.agentCache.set(codeUser, id);
       return id;
     }
-    
+
     // Si pas trouvé et on a un nom, créer ou trouver par nom
     if (nomAgent) {
       const normalizedName = this.normalizeName(nomAgent);
-      
+
       // Chercher par nom normalisé
       result = await this.pool.request()
         .input('nom_normalise', sql.NVarChar, normalizedName)
         .query(`
-          SELECT agent_unique_id 
-          FROM tm_agent_mapping 
+          SELECT agent_unique_id
+          FROM tm_agent_mapping
           WHERE agent_nom_normalise = @nom_normalise
         `);
-      
+
       let agentUniqueId;
-      
+
       if (result.recordset.length > 0) {
         agentUniqueId = result.recordset[0].agent_unique_id;
       } else {
@@ -183,32 +213,118 @@ class AgentDeduplicationService {
           .input('nom', sql.NVarChar, nomAgent)
           .input('nom_normalise', sql.NVarChar, normalizedName)
           .query(`
-            INSERT INTO tm_agent_mapping (agent_nom, agent_nom_normalise)
-            VALUES (@nom, @nom_normalise);
+            INSERT INTO tm_agent_mapping (agent_nom, agent_nom_normalise, statut)
+            VALUES (@nom, @nom_normalise, 'ACTIF');
             SELECT SCOPE_IDENTITY() as id;
           `);
-        
+
         agentUniqueId = result.recordset[0].id;
       }
-      
+
       // Lier le code à l'agent
       try {
         await this.pool.request()
           .input('agent_unique_id', sql.Int, agentUniqueId)
           .input('code_user', sql.VarChar, codeUser)
+          .input('code_agence', sql.VarChar, codeAgence || '')
           .query(`
+            IF NOT EXISTS (SELECT 1 FROM tm_agent_codes WHERE code_user = @code_user)
             INSERT INTO tm_agent_codes (agent_unique_id, code_user, code_agence)
-            VALUES (@agent_unique_id, @code_user, '')
+            VALUES (@agent_unique_id, @code_user, @code_agence)
           `);
       } catch (e) {
         // Déjà existant
       }
-      
+
       this.agentCache.set(codeUser, agentUniqueId);
       return agentUniqueId;
     }
-    
-    return null;
+
+    // Si pas de nom fourni (code inconnu comme MRAIZ00)
+    // Créer un agent temporaire avec le code comme nom
+    // Marquer comme INCONNU pour permettre liaison manuelle plus tard
+    const normalizedCode = this.normalizeName(codeUser);
+
+    const tempAgent = await this.pool.request()
+      .input('nom', sql.NVarChar, codeUser)
+      .input('nom_normalise', sql.NVarChar, normalizedCode)
+      .query(`
+        INSERT INTO tm_agent_mapping (agent_nom, agent_nom_normalise, statut)
+        VALUES (@nom, @nom_normalise, 'INCONNU');
+        SELECT SCOPE_IDENTITY() as id;
+      `);
+
+    const agentUniqueId = tempAgent.recordset[0].id;
+
+    // Lier le code
+    try {
+      await this.pool.request()
+        .input('agent_unique_id', sql.Int, agentUniqueId)
+        .input('code_user', sql.VarChar, codeUser)
+        .input('code_agence', sql.VarChar, codeAgence || '')
+        .query(`
+          INSERT INTO tm_agent_codes (agent_unique_id, code_user, code_agence)
+          VALUES (@agent_unique_id, @code_user, @code_agence)
+        `);
+    } catch (e) {
+      // Déjà existant
+    }
+
+    this.agentCache.set(codeUser, agentUniqueId);
+
+    console.log(`⚠️  Code agent inconnu créé: ${codeUser} → agent_unique_id ${agentUniqueId} (INCONNU)`);
+
+    return agentUniqueId;
+  }
+
+  /**
+   * Lie un code agent inconnu à un agent existant
+   */
+  async linkUnknownCodeToAgent(codeUser, targetAgentId) {
+    // Trouver l'agent inconnu actuel
+    const currentCode = await this.pool.request()
+      .input('code_user', sql.VarChar, codeUser)
+      .query(`
+        SELECT agent_unique_id
+        FROM tm_agent_codes
+        WHERE code_user = @code_user
+      `);
+
+    if (currentCode.recordset.length === 0) {
+      throw new Error(`Code ${codeUser} non trouvé`);
+    }
+
+    const oldAgentId = currentCode.recordset[0].agent_unique_id;
+
+    // Mettre à jour le code pour pointer vers le nouvel agent
+    await this.pool.request()
+      .input('code_user', sql.VarChar, codeUser)
+      .input('new_agent_id', sql.Int, targetAgentId)
+      .query(`
+        UPDATE tm_agent_codes
+        SET agent_unique_id = @new_agent_id
+        WHERE code_user = @code_user
+      `);
+
+    // Supprimer l'ancien agent temporaire s'il n'a plus de codes liés
+    const remainingCodes = await this.pool.request()
+      .input('agent_id', sql.Int, oldAgentId)
+      .query(`
+        SELECT COUNT(*) as count
+        FROM tm_agent_codes
+        WHERE agent_unique_id = @agent_id
+      `);
+
+    if (remainingCodes.recordset[0].count === 0) {
+      await this.pool.request()
+        .input('agent_id', sql.Int, oldAgentId)
+        .query(`DELETE FROM tm_agent_mapping WHERE agent_unique_id = @agent_id`);
+    }
+
+    // Invalider le cache
+    this.agentCache.delete(codeUser);
+
+    console.log(`✅ Code ${codeUser} lié à l'agent ${targetAgentId}`);
   }
 }
 
