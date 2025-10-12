@@ -13,6 +13,7 @@ const AgentDeduplicationService = require('./agent-deduplication');
 const validationRoutes = require('./validation-routes');
 const unknownAgentsRoutes = require('./unknown-agents-routes');
 const globalAgencyRoutes = require('./global-agency-routes');
+const reportsRoutes = require('./reports-routes');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -545,6 +546,9 @@ async function startServer() {
 
   // Monter les routes de gestion des assignations agent-agence pour Global
   app.use('/api/global', globalAgencyRoutes(authMiddleware));
+
+  // Monter les routes de génération de rapports
+  app.use('/api/rapports', reportsRoutes(authMiddleware));
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`

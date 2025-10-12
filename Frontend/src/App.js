@@ -401,9 +401,9 @@ const App = () => {
                 value={selectedPartner}
                 onChange={(e) => {
                   setSelectedPartner(e.target.value);
-                  // Si Global est sélectionné, forcer la sélection d'une agence spécifique
-                  if (e.target.value === 'GLOBAL' && selectedAgence === 'MULTI') {
-                    setSelectedAgence('');
+                  // Si Global est sélectionné, forcer mode MULTI (multi-agence)
+                  if (e.target.value === 'GLOBAL') {
+                    setSelectedAgence('MULTI');
                   }
                 }}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -416,36 +416,41 @@ const App = () => {
               </select>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Mode d'import
-                {selectedPartner === 'GLOBAL' && (
-                  <span className="ml-2 text-xs text-orange-600">
-                    (Sélection d'agence requise pour Global)
-                  </span>
-                )}
-              </label>
-              <select
-                value={selectedAgence}
-                onChange={(e) => setSelectedAgence(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                disabled={selectedPartner === 'GLOBAL' && agences.length === 0}
-              >
-                {selectedPartner !== 'GLOBAL' && (
+            {selectedPartner !== 'GLOBAL' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Mode d'import
+                </label>
+                <select
+                  value={selectedAgence}
+                  onChange={(e) => setSelectedAgence(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
                   <option value="MULTI">
                     🏢 Toutes les agences (détection auto)
                   </option>
-                )}
-                {selectedPartner === 'GLOBAL' && (
-                  <option value="">-- Sélectionner une agence --</option>
-                )}
-                {agences.map(agence => (
-                  <option key={agence.code_agence} value={agence.code_agence}>
-                    {agence.nom_agence}
-                  </option>
-                ))}
-              </select>
-            </div>
+                  {agences.map(agence => (
+                    <option key={agence.code_agence} value={agence.code_agence}>
+                      {agence.nom_agence}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {selectedPartner === 'GLOBAL' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Mode d'import
+                </label>
+                <div className="w-full px-3 py-2 border border-gray-200 bg-blue-50 rounded-md text-sm text-blue-800">
+                  <Building2 className="inline w-4 h-4 mr-2" />
+                  Fichier multi-agence (assignation manuelle après import)
+                </div>
+                <p className="mt-1 text-xs text-gray-500">
+                  Les fichiers Global contiennent des agents de toutes les agences. Vous assignerez les agences après l'import via l'onglet "Global Agences".
+                </p>
+              </div>
+            )}
 
             <div className="md:col-span-2">
               <label className="block text-sm font-medium text-gray-700 mb-2">

@@ -257,6 +257,9 @@ class ImportHandler {
         }
 
         // 3. Insérer dans la table temporaire
+        // Pour Global: trans.codeAgence est explicitement null, on ne doit PAS utiliser agenceId
+        const finalCodeAgence = (trans.codeAgence === null) ? null : (trans.codeAgence || agenceId);
+
         await this.pool.request()
           .input('sessionId', sql.VarChar, importSessionId)
           .input('numero', sql.Numeric(20, 0), trans.numero)
@@ -269,7 +272,7 @@ class ImportHandler {
           .input('dateOperation', sql.DateTime, trans.dateOperation)
           .input('beneficiaire', sql.VarChar, trans.beneficiaire)
           .input('expediteur', sql.VarChar, trans.expediteur || '')
-          .input('codeAgence', sql.VarChar, trans.codeAgence || agenceId)
+          .input('codeAgence', sql.VarChar, finalCodeAgence)
           .input('typeOp', sql.VarChar, trans.typeOperation)
           .input('montantTotal', sql.Decimal(18, 2), trans.montant + trans.taxe)
           .input('agentUniqueId', sql.Int, agentUniqueId)
@@ -376,6 +379,25 @@ class ImportHandler {
       if (firstRow.toString().includes('MoneyGram')) return 'MONEYGRAM_SUMMARY';
       if (firstRow.toString().includes('Ria')) return 'RIA_SUMMARY';
       if (firstRow.toString().includes('Global')) return 'GLOBAL_SUMMARY';
+    }
+
+    // Global Excel (11 colonnes, commence par une date au format M/D/YY HH:mm)
+    const cell1 = worksheet.getRow(1).getCell(1).value;
+    const cell3 = worksheet.getRow(1).getCell(3).value;
+    const cell10 = worksheet.getRow(1).getCell(10).value;
+
+    // Vérifier si c'est Global: date en col1, code transaction 12 chiffres en col3, montant en col10
+    if (cell1 && cell3 && cell10) {
+      const dateStr = cell1.toString();
+      const codeStr = cell3.toString();
+      const montantStr = cell10.toString();
+
+      // Date format M/D/YY ou Date Excel, code 12 chiffres, montant en KMF
+      if ((dateStr.match(/^\d{1,2}\/\d{1,2}\/\d{2}/) || cell1 instanceof Date) &&
+          codeStr.match(/^\d{12}$/) &&
+          (montantStr.includes('KMF') || typeof cell10 === 'number')) {
+        return 'GLOBAL_EXCEL';
+      }
     }
 
     // RIA détaillé (format sans en-têtes, commence directement avec les dates)
@@ -830,6 +852,113 @@ class ImportHandler {
   }
 
   /**
+   * Parse fichier Global Excel (11 colonnes)
+   * Note: Global ne fournit pas de codes d'agence, l'agence doit être assignée manuellement
+   */
+  async parseGlobalExcel(filePath) {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(filePath);
+    const worksheet = workbook.worksheets[0];
+
+    const transactions = [];
+
+    // Helper pour parser les montants avec format KMF
+    const parseMontantKMF = (val) => {
+      if (!val) return 0;
+      // Format: "49 200,00 KMF" ou nombre directement
+      const str = val.toString().replace(/KMF/g, '').replace(/\s/g, '').replace(/,/g, '.');
+      return Math.abs(parseFloat(str) || 0);
+    };
+
+    // Helper pour parser les dates au format "4/30/25 14:58" ou Date Excel
+    const parseGlobalDate = (dateVal) => {
+      if (!dateVal) return new Date();
+
+      // Si c'est déjà un objet Date Excel
+      if (dateVal instanceof Date) {
+        return dateVal;
+      }
+
+      // Sinon, parser le format M/D/YY HH:mm
+      const dateStr = dateVal.toString().trim();
+      const match = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})\s+(\d{1,2}):(\d{2})$/);
+      if (match) {
+        const month = parseInt(match[1]);
+        const day = parseInt(match[2]);
+        const year = 2000 + parseInt(match[3]);
+        const hour = parseInt(match[4]);
+        const minute = parseInt(match[5]);
+        return new Date(year, month - 1, day, hour, minute);
+      }
+      return new Date();
+    };
+
+    worksheet.eachRow((row, rowNumber) => {
+      // Colonnes Global Excel:
+      // 1: Date envoi
+      // 2: Date paiement
+      // 3: Code transaction (12 chiffres)
+      // 4: Agent
+      // 5: Expéditeur
+      // 6: Bénéficiaire
+      // 7: Numéro téléphone (codeInterne)
+      // 8: Montant EUR (non utilisé)
+      // 9: Devise EUR
+      // 10: Montant KMF (utilisé pour MONTANT)
+      // 11: Devise KMF
+
+      const dateCreation = row.getCell(1).value;
+      const datePaiement = row.getCell(2).value;
+      const numeroRef = row.getCell(3).value;
+      const agent = row.getCell(4).value;
+      const expediteur = row.getCell(5).value;
+      const beneficiaire = row.getCell(6).value;
+      const codeInterne = row.getCell(7).value;
+      const montantSource = row.getCell(8).value;  // EUR - NOT USED
+      const deviseSource = row.getCell(9).value;
+      const montantPaye = row.getCell(10).value;    // KMF - THIS IS USED
+      const devisePaiement = row.getCell(11).value;
+
+      // Vérifier que c'est une ligne de données valide
+      if (!numeroRef || !datePaiement) return;
+
+      // Vérifier que le code transaction est bien numérique (12 chiffres)
+      const numeroRefStr = numeroRef.toString().trim();
+      if (!/^\d{12}$/.test(numeroRefStr)) return;
+
+      // Parser la date
+      const parsedDate = parseGlobalDate(datePaiement);
+
+      // Parser le montant KMF (colonne 10)
+      const montant = parseMontantKMF(montantPaye);
+
+      // Exclure les transactions avec montant = 0
+      if (montant === 0) return;
+
+      transactions.push({
+        numero: parseInt(codeInterne) || 0,
+        codeEnvoi: numeroRefStr,
+        partenaire: 'GLOBAL',
+        montant: montant,
+        commission: 0, // Global ne fournit pas la commission séparément
+        taxe: 0,
+        effectuePar: (agent ? agent.toString().trim() : 'INCONNU').substring(0, 50),
+        dateOperation: parsedDate,
+        beneficiaire: (beneficiaire ? beneficiaire.toString() : '').substring(0, 250),
+        expediteur: (expediteur ? expediteur.toString() : '').substring(0, 250),
+        codeAgence: null, // Sera fourni manuellement par l'utilisateur
+        typeOperation: 'PAIEMENT'
+      });
+    });
+
+    return {
+      type: 'GLOBAL',
+      transactions,
+      count: transactions.length
+    };
+  }
+
+  /**
    * Parse un fichier selon son type
    * @param {string} filePath - Chemin du fichier
    * @param {string} partnerOverride - Partenaire à forcer (optionnel)
@@ -858,6 +987,10 @@ class ImportHandler {
 
       case 'GLOBAL':
         result = await this.parseGlobal(filePath);
+        break;
+
+      case 'GLOBAL_EXCEL':
+        result = await this.parseGlobalExcel(filePath);
         break;
 
       case 'MONEYGRAM_SUMMARY':
