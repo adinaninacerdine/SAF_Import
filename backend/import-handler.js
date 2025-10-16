@@ -432,12 +432,20 @@ class ImportHandler {
       if (firstRow.toString().includes('Global')) return 'GLOBAL_SUMMARY';
     }
 
-    // Global Excel (11 colonnes, commence par une date au format M/D/YY HH:mm)
+    // Global Excel (11 colonnes)
+    // Ligne 1 peut être soit un en-tête ("Date Creation") soit directement des données
     const cell1 = worksheet.getRow(1).getCell(1).value;
     const cell3 = worksheet.getRow(1).getCell(3).value;
     const cell10 = worksheet.getRow(1).getCell(10).value;
 
-    // Vérifier si c'est Global: date en col1, code transaction 12 chiffres en col3, montant en col10
+    // Vérifier si ligne 1 est un en-tête Global
+    if (cell1 && cell1.toString().includes('Date') &&
+        cell3 && cell3.toString().includes('MTCN') &&
+        cell10 && cell10.toString().includes('Montant')) {
+      return 'GLOBAL_EXCEL';
+    }
+
+    // Vérifier si ligne 1 contient des données Global (format ancien sans en-tête)
     if (cell1 && cell3 && cell10) {
       const dateStr = cell1.toString();
       const codeStr = cell3.toString();
@@ -1565,30 +1573,36 @@ class ImportHandler {
 
     worksheet.eachRow((row, rowNumber) => {
       // Colonnes Global Excel:
-      // 1: Date envoi
-      // 2: Date paiement
-      // 3: Code transaction (12 chiffres)
-      // 4: Agent
-      // 5: Expéditeur
-      // 6: Bénéficiaire
-      // 7: Numéro téléphone (codeInterne)
-      // 8: Montant EUR (non utilisé)
-      // 9: Devise EUR
-      // 10: Montant KMF (utilisé pour MONTANT)
-      // 11: Devise KMF
+      // 1: Date Creation (ou Date envoi)
+      // 2: Date Paiement
+      // 3: MTCN (Code transaction 12 chiffres)
+      // 4: Expediteur (ou Agent dans certains formats)
+      // 5: Beneficiaire
+      // 6: Code Agent
+      // 7: Code Agence
+      // 8: Montant Source (EUR)
+      // 9: Devise (EUR)
+      // 10: Montant Paye (KMF) - UTILISÉ
+      // 11: Devise Paiement (KMF)
 
       const dateCreation = row.getCell(1).value;
       const datePaiement = row.getCell(2).value;
       const numeroRef = row.getCell(3).value;
-      const agent = row.getCell(4).value;
-      const expediteur = row.getCell(5).value;
-      const beneficiaire = row.getCell(6).value;
-      const codeInterne = row.getCell(7).value;
+      const expediteur = row.getCell(4).value;
+      const beneficiaire = row.getCell(5).value;
+      const agent = row.getCell(6).value;
+      const codeAgence = row.getCell(7).value;
       const montantSource = row.getCell(8).value;  // EUR - NOT USED
       const deviseSource = row.getCell(9).value;
       const montantPaye = row.getCell(10).value;    // KMF - THIS IS USED
       const devisePaiement = row.getCell(11).value;
-la
+
+      // Ignorer la ligne d'en-tête (si présente)
+      if (rowNumber === 1 && numeroRef && numeroRef.toString().toUpperCase() === 'MTCN') {
+        console.log('  ℹ️ Ligne d\'en-tête détectée, skip...');
+        return;
+      }
+
       // Vérifier que c'est une ligne de données valide
       if (!numeroRef || !datePaiement) return;
 
@@ -1606,7 +1620,7 @@ la
       if (montant === 0) return;
 
       transactions.push({
-        numero: parseInt(codeInterne) || 0,
+        numero: parseInt(codeAgence) || 0,  // Utiliser Code Agence (col 7) comme numero
         codeEnvoi: numeroRefStr,
         partenaire: 'GLOBAL',
         montant: montant,
