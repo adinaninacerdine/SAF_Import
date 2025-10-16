@@ -6,7 +6,32 @@ import ReportsPage from './ReportsPage';
 import UnknownAgentsPage from './UnknownAgentsPage';
 import GlobalAgencyLinkingPage from './GlobalAgencyLinkingPage';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001/api';
+// Détection automatique de l'URL de l'API basée sur l'hôte actuel
+const getApiUrl = () => {
+  // Si variable d'environnement explicite, l'utiliser
+  if (process.env.REACT_APP_API_URL && process.env.REACT_APP_API_URL.trim() !== '') {
+    console.log(`🌐 API URL depuis env: ${process.env.REACT_APP_API_URL}`);
+    return process.env.REACT_APP_API_URL;
+  }
+
+  // Sinon, détecter automatiquement depuis window.location
+  const protocol = window.location.protocol; // http: ou https:
+  const hostname = window.location.hostname; // localhost ou 192.168.x.x
+  const apiPort = 3001;
+
+  const detectedUrl = `${protocol}//${hostname}:${apiPort}/api`;
+
+  console.log(`🌐 Détection API URL:`);
+  console.log(`   - window.location.href: ${window.location.href}`);
+  console.log(`   - window.location.hostname: ${hostname}`);
+  console.log(`   - protocol: ${protocol}`);
+  console.log(`   - API URL construite: ${detectedUrl}`);
+
+  return detectedUrl;
+};
+
+const API_URL = getApiUrl();
+console.log(`✅ API URL finale: ${API_URL}`);
 
 const LoginPage = ({ onLogin }) => {
   const [credentials, setCredentials] = useState({ username: '', password: '' });
@@ -273,7 +298,7 @@ const App = () => {
             <div>
               <h1 className="text-2xl font-bold text-gray-900 flex items-center">
                 <Shield className="w-6 h-6 mr-2 text-blue-600" />
-                SAF Import System
+                MCTV Import System
               </h1>
               <p className="text-sm text-gray-500">Import multi-agences avec déduplication</p>
             </div>

@@ -19,9 +19,28 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const JWT_SECRET = process.env.JWT_SECRET || 'saf-secret-key-2024';
 
-// Middleware
+// Middleware CORS - Accepte dynamiquement localhost + IP réseau local
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+  origin: function(origin, callback) {
+    // Autoriser les requêtes sans origin (Postman, mobile apps, etc.)
+    if (!origin) return callback(null, true);
+
+    // Accepter localhost (toutes variantes)
+    if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
+      return callback(null, true);
+    }
+
+    // Accepter toutes les IP du réseau local (192.168.x.x, 172.x.x.x, 10.x.x.x)
+    const localNetworkPattern = /^https?:\/\/(192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2[0-9]|3[0-1])\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3})(:\d+)?$/;
+
+    if (localNetworkPattern.test(origin)) {
+      return callback(null, true);
+    }
+
+    // Refuser les autres origines
+    console.log(`⚠️ Origine refusée (non-réseau local): ${origin}`);
+    callback(new Error('Not allowed by CORS'));
+  },
   credentials: true
 }));
 app.use(express.json());
@@ -463,9 +482,9 @@ app.get('/api/reports', authMiddleware, async (req, res) => {
     const fs = require('fs').promises;
     const files = await fs.readdir(__dirname);
 
-    // Filtrer uniquement les fichiers rapport_*.csv et rapport_*.txt
+    // Filtrer uniquement les fichiers rapport_*.csv, rapport_*.txt, rapport_*.xlsx et rapport_*.pdf
     const reportFiles = files.filter(f =>
-      f.startsWith('rapport_') && (f.endsWith('.csv') || f.endsWith('.txt'))
+      f.startsWith('rapport_') && (f.endsWith('.csv') || f.endsWith('.txt') || f.endsWith('.xlsx') || f.endsWith('.pdf'))
     );
 
     // Récupérer les métadonnées de chaque fichier
@@ -500,7 +519,7 @@ app.get('/api/reports/download/:filename', authMiddleware, (req, res) => {
   }
 
   // Vérifier que le fichier existe et est un rapport valide
-  if (!(filename.endsWith('.csv') || filename.endsWith('.txt'))) {
+  if (!(filename.endsWith('.csv') || filename.endsWith('.txt') || filename.endsWith('.xlsx') || filename.endsWith('.pdf'))) {
     return res.status(400).json({ error: 'Type de fichier non supporté' });
   }
 

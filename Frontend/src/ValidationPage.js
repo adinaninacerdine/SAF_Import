@@ -393,56 +393,180 @@ const ValidationPage = ({ token }) => {
                           </div>
                         ) : (
                           <div className="overflow-x-auto">
-                            <table className="min-w-full text-sm">
-                              <thead className="bg-gray-100">
-                                <tr>
-                                  <th className="px-3 py-2 text-left font-semibold">Agence</th>
-                                  <th className="px-3 py-2 text-left">Code Envoi</th>
-                                  <th className="px-3 py-2 text-left">Expéditeur</th>
-                                  <th className="px-3 py-2 text-left">Bénéficiaire</th>
-                                  <th className="px-3 py-2 text-right">Montant</th>
-                                  <th className="px-3 py-2 text-left">Agent</th>
-                                  <th className="px-3 py-2 text-left">Date</th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-gray-200">
-                                {importDetails.map((trans, idx) => (
-                                  <tr key={idx} className="hover:bg-gray-50">
-                                    <td className="px-3 py-2">
-                                      <div className="flex flex-col">
-                                        <span className="font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded text-center mb-1">
-                                          {trans.CODEAGENCE || 'N/A'}
-                                        </span>
-                                        {trans.nom_agence && (
-                                          <span className="text-xs text-gray-600 truncate max-w-[120px]" title={trans.nom_agence}>
-                                            {trans.nom_agence}
-                                          </span>
-                                        )}
-                                      </div>
-                                    </td>
-                                    <td className="px-3 py-2 font-mono text-xs">{trans.CODEENVOI}</td>
-                                    <td className="px-3 py-2 truncate max-w-[150px]" title={trans.NOMPRENOMEXPEDITEUR}>
-                                      {trans.NOMPRENOMEXPEDITEUR}
-                                    </td>
-                                    <td className="px-3 py-2 truncate max-w-[150px]" title={trans.NOMPRENOMBENEFICIAIRE}>
-                                      {trans.NOMPRENOMBENEFICIAIRE}
-                                    </td>
-                                    <td className="px-3 py-2 text-right font-medium">{formatAmount(trans.MONTANT)}</td>
-                                    <td className="px-3 py-2">
-                                      <div className="flex items-center">
-                                        <span className="truncate max-w-[120px]" title={trans.agent_nom_unifie || trans.EFFECTUEPAR}>
-                                          {trans.agent_nom_unifie || trans.EFFECTUEPAR}
-                                        </span>
-                                        {trans.agent_nom_unifie && (
-                                          <span className="ml-1 text-xs text-green-600 flex-shrink-0" title="Agent unifié">✓</span>
-                                        )}
-                                      </div>
-                                    </td>
-                                    <td className="px-3 py-2 text-xs whitespace-nowrap">{formatDate(trans.DATEOPERATION)}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
+                            {/* Tableau adaptatif selon le partenaire */}
+                            {(() => {
+                              // Déterminer le partenaire (on prend le premier de la liste ou depuis les détails)
+                              const partner = imp.partenaire || (importDetails.length > 0 ? importDetails[0].PARTENAIRETRANSF : 'GLOBAL');
+
+                              // Configuration des colonnes selon le partenaire
+                              if (partner === 'RIA') {
+                                // Colonnes spécifiques RIA
+                                return (
+                                  <table className="min-w-full text-sm">
+                                    <thead className="bg-gray-100">
+                                      <tr>
+                                        <th className="px-3 py-2 text-left">Numéro transfert</th>
+                                        <th className="px-3 py-2 text-left">Date paiement</th>
+                                        <th className="px-3 py-2 text-left">Bénéficiaire</th>
+                                        <th className="px-3 py-2 text-center">Seq</th>
+                                        <th className="px-3 py-2 text-center">Devise</th>
+                                        <th className="px-3 py-2 text-right">Montant reçu</th>
+                                        <th className="px-3 py-2 text-right">Taxe</th>
+                                        <th className="px-3 py-2 text-right">Total</th>
+                                        <th className="px-3 py-2 text-right">Commission</th>
+                                        <th className="px-3 py-2 text-left">Agent</th>
+                                        <th className="px-3 py-2 text-left">Agence</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-200">
+                                      {importDetails.map((trans, idx) => (
+                                        <tr key={idx} className="hover:bg-gray-50">
+                                          <td className="px-3 py-2 font-mono text-xs text-blue-600 font-bold">{trans.CODEENVOI}</td>
+                                          <td className="px-3 py-2 text-xs whitespace-nowrap">{formatDate(trans.DATEOPERATION)}</td>
+                                          <td className="px-3 py-2 truncate max-w-[150px]" title={trans.NOMPRENOMBENEFICIAIRE}>
+                                            {trans.NOMPRENOMBENEFICIAIRE}
+                                          </td>
+                                          <td className="px-3 py-2 text-center">{trans.NUMERO || '-'}</td>
+                                          <td className="px-3 py-2 text-center text-xs">KMF</td>
+                                          <td className="px-3 py-2 text-right font-medium">{formatAmount(trans.MONTANT)}</td>
+                                          <td className="px-3 py-2 text-right">{formatAmount(trans.TAXES || 0)}</td>
+                                          <td className="px-3 py-2 text-right font-bold">{formatAmount(trans.MONTANTTOTAL || trans.MONTANT)}</td>
+                                          <td className="px-3 py-2 text-right text-green-600">{formatAmount(trans.COMMISSION || 0)}</td>
+                                          <td className="px-3 py-2">
+                                            <div className="flex items-center">
+                                              <span className="truncate max-w-[100px]" title={trans.agent_nom_unifie || trans.EFFECTUEPAR}>
+                                                {trans.agent_nom_unifie || trans.EFFECTUEPAR}
+                                              </span>
+                                              {trans.agent_nom_unifie && (
+                                                <span className="ml-1 text-xs text-green-600" title="Agent unifié">✓</span>
+                                              )}
+                                            </div>
+                                          </td>
+                                          <td className="px-3 py-2">
+                                            <span className="font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded text-xs">
+                                              {trans.CODEAGENCE || 'N/A'}
+                                            </span>
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                );
+                              } else if (partner === 'MONEYGRAM') {
+                                // Colonnes spécifiques MoneyGram
+                                return (
+                                  <table className="min-w-full text-sm">
+                                    <thead className="bg-gray-100">
+                                      <tr>
+                                        <th className="px-3 py-2 text-left">Heure et date</th>
+                                        <th className="px-3 py-2 text-left">Num Réf</th>
+                                        <th className="px-3 py-2 text-left">Type d'offre</th>
+                                        <th className="px-3 py-2 text-left">ID utilisateur</th>
+                                        <th className="px-3 py-2 text-center">ID point vente</th>
+                                        <th className="px-3 py-2 text-right">Montant</th>
+                                        <th className="px-3 py-2 text-right">Frais</th>
+                                        <th className="px-3 py-2 text-right">Total</th>
+                                        <th className="px-3 py-2 text-left">Agence</th>
+                                        <th className="px-3 py-2 text-center">Type Op.</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-200">
+                                      {importDetails.map((trans, idx) => (
+                                        <tr key={idx} className="hover:bg-gray-50">
+                                          <td className="px-3 py-2 text-xs whitespace-nowrap">{formatDate(trans.DATEOPERATION)}</td>
+                                          <td className="px-3 py-2 font-mono text-xs text-blue-600 font-bold">{trans.CODEENVOI}</td>
+                                          <td className="px-3 py-2 text-xs truncate max-w-[120px]" title={trans.NOMPRENOMBENEFICIAIRE}>
+                                            {trans.NOMPRENOMBENEFICIAIRE || trans.TYPEOPERATION || '-'}
+                                          </td>
+                                          <td className="px-3 py-2 truncate max-w-[100px]" title={trans.EFFECTUEPAR}>
+                                            {trans.EFFECTUEPAR}
+                                          </td>
+                                          <td className="px-3 py-2 text-center text-xs">-</td>
+                                          <td className="px-3 py-2 text-right font-medium">{formatAmount(trans.MONTANT)}</td>
+                                          <td className="px-3 py-2 text-right text-orange-600">{formatAmount(trans.COMMISSION || 0)}</td>
+                                          <td className="px-3 py-2 text-right font-bold">{formatAmount(trans.MONTANTTOTAL || trans.MONTANT)}</td>
+                                          <td className="px-3 py-2">
+                                            <div className="flex flex-col">
+                                              <span className="font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded text-xs text-center">
+                                                {trans.CODEAGENCE || 'N/A'}
+                                              </span>
+                                              {trans.nom_agence && (
+                                                <span className="text-xs text-gray-600 truncate mt-1" title={trans.nom_agence}>
+                                                  {trans.nom_agence}
+                                                </span>
+                                              )}
+                                            </div>
+                                          </td>
+                                          <td className="px-3 py-2 text-center">
+                                            <span className={`px-2 py-1 rounded text-xs font-medium ${
+                                              trans.TYPEOPERATION === 'ENVOI'
+                                                ? 'bg-yellow-100 text-yellow-800'
+                                                : 'bg-green-100 text-green-800'
+                                            }`}>
+                                              {trans.TYPEOPERATION || 'PAIEMENT'}
+                                            </span>
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                );
+                              } else {
+                                // Format par défaut (GLOBAL et autres)
+                                return (
+                                  <table className="min-w-full text-sm">
+                                    <thead className="bg-gray-100">
+                                      <tr>
+                                        <th className="px-3 py-2 text-left font-semibold">Agence</th>
+                                        <th className="px-3 py-2 text-left">Code Envoi</th>
+                                        <th className="px-3 py-2 text-left">Expéditeur</th>
+                                        <th className="px-3 py-2 text-left">Bénéficiaire</th>
+                                        <th className="px-3 py-2 text-right">Montant</th>
+                                        <th className="px-3 py-2 text-left">Agent</th>
+                                        <th className="px-3 py-2 text-left">Date</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-200">
+                                      {importDetails.map((trans, idx) => (
+                                        <tr key={idx} className="hover:bg-gray-50">
+                                          <td className="px-3 py-2">
+                                            <div className="flex flex-col">
+                                              <span className="font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded text-center mb-1">
+                                                {trans.CODEAGENCE || 'N/A'}
+                                              </span>
+                                              {trans.nom_agence && (
+                                                <span className="text-xs text-gray-600 truncate max-w-[120px]" title={trans.nom_agence}>
+                                                  {trans.nom_agence}
+                                                </span>
+                                              )}
+                                            </div>
+                                          </td>
+                                          <td className="px-3 py-2 font-mono text-xs">{trans.CODEENVOI}</td>
+                                          <td className="px-3 py-2 truncate max-w-[150px]" title={trans.NOMPRENOMEXPEDITEUR}>
+                                            {trans.NOMPRENOMEXPEDITEUR}
+                                          </td>
+                                          <td className="px-3 py-2 truncate max-w-[150px]" title={trans.NOMPRENOMBENEFICIAIRE}>
+                                            {trans.NOMPRENOMBENEFICIAIRE}
+                                          </td>
+                                          <td className="px-3 py-2 text-right font-medium">{formatAmount(trans.MONTANT)}</td>
+                                          <td className="px-3 py-2">
+                                            <div className="flex items-center">
+                                              <span className="truncate max-w-[120px]" title={trans.agent_nom_unifie || trans.EFFECTUEPAR}>
+                                                {trans.agent_nom_unifie || trans.EFFECTUEPAR}
+                                              </span>
+                                              {trans.agent_nom_unifie && (
+                                                <span className="ml-1 text-xs text-green-600 flex-shrink-0" title="Agent unifié">✓</span>
+                                              )}
+                                            </div>
+                                          </td>
+                                          <td className="px-3 py-2 text-xs whitespace-nowrap">{formatDate(trans.DATEOPERATION)}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                );
+                              }
+                            })()}
                           </div>
                         )}
                       </div>

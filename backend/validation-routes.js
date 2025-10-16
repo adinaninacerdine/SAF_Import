@@ -36,6 +36,12 @@ module.exports = function(pool, importHandler, authMiddleware) {
   // Liste des imports en attente de validation
   router.get('/imports/pending', authMiddleware, async (req, res) => {
     try {
+      // Headers anti-cache pour forcer la récupération de données fraîches
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      res.setHeader('Surrogate-Control', 'no-store');
+
       const result = await pool.request().query(`
         SELECT
           import_session_id,
@@ -72,6 +78,12 @@ module.exports = function(pool, importHandler, authMiddleware) {
   // Détails d'un import en attente
   router.get('/imports/pending/:sessionId', authMiddleware, async (req, res) => {
     try {
+      // Headers anti-cache pour forcer la récupération de données fraîches
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      res.setHeader('Surrogate-Control', 'no-store');
+
       const { sessionId } = req.params;
 
       const result = await pool.request()
@@ -275,6 +287,12 @@ module.exports = function(pool, importHandler, authMiddleware) {
   // Détails des doublons pour un import
   router.get('/imports/duplicates/:sessionId', authMiddleware, async (req, res) => {
     try {
+      // Headers anti-cache pour forcer la récupération de données fraîches
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      res.setHeader('Surrogate-Control', 'no-store');
+
       const { sessionId } = req.params;
 
       const result = await pool.request()

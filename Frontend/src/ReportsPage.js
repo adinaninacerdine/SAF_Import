@@ -11,6 +11,7 @@ const ReportsPage = () => {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [selectedPartner, setSelectedPartner] = useState('');
+  const [selectedFormat, setSelectedFormat] = useState('excel'); // excel par défaut
   const [generateSuccess, setGenerateSuccess] = useState(null);
 
   useEffect(() => {
@@ -97,8 +98,10 @@ const ReportsPage = () => {
   };
 
   const getReportIcon = (filename) => {
+    if (filename.endsWith('.xlsx')) return '📊';
     if (filename.endsWith('.csv')) return '📊';
-    if (filename.endsWith('.txt')) return '📄';
+    if (filename.endsWith('.pdf')) return '📄';
+    if (filename.endsWith('.txt')) return '📝';
     return '📁';
   };
 
@@ -123,7 +126,8 @@ const ReportsPage = () => {
         body: JSON.stringify({
           dateDebut: startDate,
           dateFin: endDate,
-          partenaire: selectedPartner || null
+          partenaire: selectedPartner || null,
+          format: selectedFormat
         })
       });
 
@@ -167,7 +171,7 @@ const ReportsPage = () => {
       <div className="mb-6 p-6 bg-white shadow-md rounded-lg border border-gray-200">
         <h2 className="text-xl font-semibold text-gray-800 mb-4">📊 Générer un nouveau rapport</h2>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Date début
@@ -205,6 +209,21 @@ const ReportsPage = () => {
               <option value="RIA">RIA</option>
               <option value="MONEYGRAM">MoneyGram</option>
               <option value="GLOBAL">Global</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Format
+            </label>
+            <select
+              value={selectedFormat}
+              onChange={(e) => setSelectedFormat(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="excel">📊 Excel (.xlsx)</option>
+              <option value="pdf">📄 PDF</option>
+              <option value="txt">📝 Texte (.txt)</option>
             </select>
           </div>
 
@@ -318,7 +337,7 @@ const ReportsPage = () => {
         <h3 className="font-semibold text-blue-900 mb-2">📋 Types de rapports disponibles:</h3>
         <ul className="list-disc list-inside text-sm text-blue-800 space-y-1">
           <li><strong>MoneyGram / RIA / Global:</strong> Rapports au format contrôleur avec séparation agences principales et sous-agences</li>
-          <li><strong>Format:</strong> TXT avec colonnes (Code, Nom, Usager, Envois, Paiements, Annulations, Comm.)</li>
+          <li><strong>Formats disponibles:</strong> Excel (.xlsx), PDF ou Texte (.txt) avec colonnes (Code, Nom, Usager, Envois, Paiements, Annulations, Comm.)</li>
           <li><strong>Particularité Global:</strong> Les agents doivent être assignés manuellement avant génération du rapport</li>
         </ul>
       </div>

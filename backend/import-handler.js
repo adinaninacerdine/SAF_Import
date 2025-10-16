@@ -148,12 +148,20 @@ function normalizeAgencyName(name) {
 function extractAgencyCodeFromName(agencyLine) {
   if (!agencyLine) return null;
 
-  // Extraire le nom de l'agence (tout avant les parenthèses avec numéro de téléphone)
+  // Extraire le nom de l'agence (tout avant le dernier numéro de téléphone entre parenthèses)
   // Ex: "MCTV - GARD DU NORD (75114329)" → "MCTV - GARD DU NORD"
-  const nameMatch = agencyLine.match(/^([^(]+?)(?:\s*\(\d+\))?$/);
-  if (!nameMatch) return null;
+  // Ex: "COMOROS ENTREPRENEURSHIP CORPORATION(CEN (74119312)" → "COMOROS ENTREPRENEURSHIP CORPORATION(CEN"
 
-  const agencyName = nameMatch[1].trim();
+  // Chercher le dernier groupe de chiffres entre parenthèses (le téléphone)
+  const phoneMatch = agencyLine.match(/^(.+?)\s*\((\d{7,})\)\s*$/);
+
+  let agencyName;
+  if (phoneMatch) {
+    agencyName = phoneMatch[1].trim();
+  } else {
+    agencyName = agencyLine.trim();
+  }
+
   const normalized = normalizeAgencyName(agencyName);
 
   // Chercher dans le mapping
@@ -262,6 +270,9 @@ class ImportHandler {
         // Pour Global: trans.codeAgence est explicitement null, on ne doit PAS utiliser agenceId
         const finalCodeAgence = (trans.codeAgence === null) ? null : (trans.codeAgence || agenceId);
 
+        // Calculer le montant total : utiliser trans.montantTotal si fourni, sinon montant + taxe
+        const montantTotal = trans.montantTotal !== undefined ? trans.montantTotal : (trans.montant + trans.taxe);
+
         await this.pool.request()
           .input('sessionId', sql.VarChar, importSessionId)
           .input('numero', sql.Numeric(20, 0), trans.numero)
@@ -276,7 +287,7 @@ class ImportHandler {
           .input('expediteur', sql.VarChar, trans.expediteur || '')
           .input('codeAgence', sql.VarChar, finalCodeAgence)
           .input('typeOp', sql.VarChar, trans.typeOperation)
-          .input('montantTotal', sql.Decimal(18, 2), trans.montant + trans.taxe)
+          .input('montantTotal', sql.Decimal(18, 2), montantTotal)
           .input('agentUniqueId', sql.Int, agentUniqueId)
           .input('userId', sql.VarChar, userId)
           .query(`
@@ -337,6 +348,11 @@ class ImportHandler {
       const firstLine = lines[0] || '';
       const secondLine = lines[1] || '';
 
+      // MoneyGram CSV avec MTCN et Sender/Receiver (format Paiements)
+      if (firstLine.includes('MTCN') && firstLine.includes('Sender') && firstLine.includes('Receiver')) {
+        return 'MONEYGRAM_CSV';
+      }
+
       // MoneyGram CSV: Heure et date (locales), Num Réf, Type d'offre, Identifiant d'utilisateur, ID de point de vente, Montant, Frais, Total
       if ((firstLine.includes('Heure et date') || firstLine.includes('Num Réf')) &&
           (firstLine.includes('Montant') && firstLine.includes('Frais'))) {
@@ -382,9 +398,18 @@ class ImportHandler {
     const fourthRow = worksheet.getRow(4).getCell(1).value;
     const row16 = worksheet.getRow(16).getCell(1).value;
 
-    // MoneyGram paiement détaillé
+    // MoneyGram Paiements - Format "DÉTAILS DES RÉCEPTIONS"
+    // Ligne 1: Nom agence (ex: "MAGASIN DJANATHANE - MCTV (74719893)")
+    // Ligne 2: "DÉTAILS DES RÉCEPTIONS - KMF"
+    if (firstRow && (firstRow.toString().includes('MCTV') || firstRow.toString().includes('MAGASIN')) &&
+        secondRow && secondRow.toString().includes('DÉTAILS DES RÉCEPTIONS')) {
+      return 'MONEYGRAM_PAIEMENTS';
+    }
+
+    // RIA paiement détaillé (Rapport de Transaction Journalier)
+    // ATTENTION: Ce format est RIA, pas MoneyGram !
     if (firstRow && firstRow.toString().includes('Rapport de Transaction Journalier')) {
-      return 'MONEYGRAM_DETAIL';
+      return 'RIA_DETAIL';  // Changé de MONEYGRAM_DETAIL à RIA_DETAIL
     }
 
     // MoneyGram envois
@@ -426,6 +451,13 @@ class ImportHandler {
       }
     }
 
+    // RIA détaillé avec ligne 13 contenant "Succursale:"
+    // Vérifier la ligne 13 pour le format RIA Envois
+    const row13 = worksheet.getRow(13).getCell(1).value;
+    if (row13 && row13.toString().includes('Succursale:')) {
+      return 'RIA_DETAIL';
+    }
+
     // RIA détaillé (format sans en-têtes, commence directement avec les dates)
     if (firstRow instanceof Date && worksheet.getRow(1).getCell(3).value) {
       const pin = worksheet.getRow(1).getCell(3).value;
@@ -439,13 +471,12 @@ class ImportHandler {
 
   /**
    * Parse fichier RIA "Rapport de Transaction Journalier"
-   * (mal nommé MONEYGRAM_DETAIL historiquement, mais c'est bien RIA)
    * Structure exacte:
    * - Ligne 13: "Succursale: XXX (code)     Guichetier: NAME     Transfert d'Argent - Paiement  (count)  amount KMF"
    * - Ligne 14: En-têtes colonnes (Numéro du transfert | Date de paiement | Bénéficiaire | Seq | Monnaie locale | Montant reçu | Taxe | Total | Commission)
    * - Ligne 15+: Données transactions
    */
-  async parseMoneygramDetail(filePath) {
+  async parseRiaReportDetail(filePath) {
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(filePath);
     const worksheet = workbook.worksheets[0];
@@ -459,11 +490,13 @@ class ImportHandler {
 
       // Détecter succursale et guichetier (ligne 13 pattern)
       // Ex: "Succursale: Mctv-Mangani (001)     Guichetier: RAOUDHOI ABDEREHMANE     Transfert d'Argent - Paiement  (211)  -23,184,213.00 KMF"
+      // Ex: "Succursale: EDGY AGRO.SARL (EDAS001)     Guichetier: AHMED MOHAMED     Transfert d'Argent - Envoi  (12)  2,052,638.00 KMF"
       if (col1 && col1.toString().includes('Succursale:')) {
         const text = col1.toString();
 
         // Extraire code agence entre parenthèses après nom succursale
-        const agenceMatch = text.match(/Succursale:.*?\((\d+)\)/);
+        // Pattern pour capturer codes numériques (001) ou alphanumériques (EDAS001)
+        const agenceMatch = text.match(/Succursale:.*?\(([A-Z0-9]+)\)/i);
         if (agenceMatch) {
           currentAgence = agenceMatch[1];
         }
@@ -560,6 +593,137 @@ class ImportHandler {
   }
 
   /**
+   * Parse fichier RIA CSV standard
+   * Format: PIN,Sender,Beneficiary,Payout Amount,Commission,Paid Date,User
+   */
+  async parseRiaCSV(filePath) {
+    const content = await fs.readFile(filePath, 'utf-8');
+    const Papa = require('papaparse');
+
+    const parseResult = Papa.parse(content, {
+      header: true,
+      skipEmptyLines: true,
+      dynamicTyping: true
+    });
+
+    const transactions = [];
+
+    // Mapper les colonnes RIA
+    const columnMappings = {
+      pin: ['PIN', 'Reference', 'Code'],
+      sender: ['Sender', 'Expéditeur', 'Sender Name'],
+      beneficiary: ['Beneficiary', 'Bénéficiaire', 'Receiver', 'Receiver Name'],
+      amount: ['Payout Amount', 'Amount', 'Montant', 'Principal'],
+      commission: ['Commission', 'Fees', 'Frais'],
+      date: ['Paid Date', 'Date', 'Date/Time', 'Payment Date'],
+      user: ['User', 'Operator', 'Agent', 'Effectué par']
+    };
+
+    // Fonction pour trouver la colonne
+    const findColumn = (row, mappings) => {
+      for (const key of Object.keys(row)) {
+        const normalizedKey = key.trim().toLowerCase();
+        for (const mapping of mappings) {
+          if (normalizedKey.includes(mapping.toLowerCase())) {
+            return row[key];
+          }
+        }
+      }
+      return null;
+    };
+
+    for (const row of parseResult.data) {
+      const pin = findColumn(row, columnMappings.pin);
+      const sender = findColumn(row, columnMappings.sender);
+      const beneficiary = findColumn(row, columnMappings.beneficiary);
+      const amount = findColumn(row, columnMappings.amount);
+      const commission = findColumn(row, columnMappings.commission);
+      const dateStr = findColumn(row, columnMappings.date);
+      const user = findColumn(row, columnMappings.user);
+
+      if (!pin || !amount) continue;
+
+      // Parser le montant
+      let montantValue = 0;
+      if (typeof amount === 'number') {
+        montantValue = Math.abs(amount);
+      } else if (typeof amount === 'string') {
+        let cleanAmount = amount.replace(/[^\d,.-]/g, '');
+        const lastComma = cleanAmount.lastIndexOf(',');
+        const lastDot = cleanAmount.lastIndexOf('.');
+
+        if (lastComma > lastDot) {
+          cleanAmount = cleanAmount.replace(/\./g, '').replace(',', '.');
+        } else {
+          cleanAmount = cleanAmount.replace(/,/g, '');
+        }
+        montantValue = Math.abs(parseFloat(cleanAmount) || 0);
+      }
+
+      // Parser la commission
+      let commissionValue = 0;
+      if (commission) {
+        if (typeof commission === 'number') {
+          commissionValue = Math.abs(commission);
+        } else if (typeof commission === 'string') {
+          let cleanCommission = commission.replace(/[^\d,.-]/g, '');
+          const lastComma = cleanCommission.lastIndexOf(',');
+          const lastDot = cleanCommission.lastIndexOf('.');
+
+          if (lastComma > lastDot) {
+            cleanCommission = cleanCommission.replace(/\./g, '').replace(',', '.');
+          } else {
+            cleanCommission = cleanCommission.replace(/,/g, '');
+          }
+          commissionValue = Math.abs(parseFloat(cleanCommission) || 0);
+        }
+      }
+
+      // Parser la date
+      let dateOperation = new Date();
+      if (dateStr) {
+        if (dateStr instanceof Date) {
+          dateOperation = dateStr;
+        } else {
+          const dateString = dateStr.toString();
+          // Format DD/MM/YYYY ou MM/DD/YYYY
+          const dateMatch = dateString.match(/(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/);
+          if (dateMatch) {
+            const day = parseInt(dateMatch[1]);
+            const month = parseInt(dateMatch[2]);
+            const year = parseInt(dateMatch[3]);
+            // Essayer format DD/MM/YYYY (plus courant)
+            if (month <= 12) {
+              dateOperation = new Date(year, month - 1, day);
+            }
+          }
+        }
+      }
+
+      transactions.push({
+        numero: 0,
+        codeEnvoi: pin.toString().trim(),
+        partenaire: 'RIA',
+        montant: montantValue,
+        commission: commissionValue,
+        taxe: 0,
+        effectuePar: user ? user.toString().substring(0, 50) : 'INCONNU',
+        dateOperation: dateOperation,
+        beneficiaire: beneficiary ? beneficiary.toString().substring(0, 250) : '',
+        expediteur: sender ? sender.toString().substring(0, 250) : '',
+        codeAgence: '001', // Par défaut
+        typeOperation: 'PAIEMENT'
+      });
+    }
+
+    return {
+      type: 'RIA_CSV',
+      transactions,
+      count: transactions.length
+    };
+  }
+
+  /**
    * Parse fichier RIA détaillé (format sans en-têtes)
    */
   async parseRiaDetail(filePath) {
@@ -616,12 +780,17 @@ class ImportHandler {
   }
 
   /**
-   * Parse fichier MoneyGram Envois
-   * Structure exacte:
-   * - Ligne 14: Nom agence (ex: "DAHALANI GENERATION.SARL - MCTV (74046472)")
-   * - Ligne 15: "Détails des envois - KMF"
-   * - Ligne 16: En-têtes colonnes (Heure et date (locales) | Num Réf | Type d'offre | Identifiant d'utilisateur | ID de point de vente | Montant | Frais | Total)
-   * - Ligne 17+: Données transactions
+   * Parse fichier MoneyGram Envois et Réceptions (fichier combiné)
+   *
+   * Structure ENVOIS (8 colonnes):
+   * Col1: Heure et date | Col2: Num Réf | Col3: Type d'offre (vide) | Col4: ID utilisateur | Col5: ID point vente | Col6: Montant | Col7: Frais | Col8: Total
+   *
+   * Structure RÉCEPTIONS (9 colonnes - colonne vide en plus):
+   * Col1: Heure et date | Col2: Num Réf | Col3: [VIDE] | Col4: Code auth | Col5: ID utilisateur | Col6: ID point vente | Col7: Montant | Col8: Frais | Col9: Total
+   *
+   * MAPPING CORRECT:
+   * ENVOIS:  userId=Col4, montant=Col6, frais=Col7, total=Col8
+   * RÉCEPTIONS: userId=Col5, montant=Col7, frais=Col8, total=Col9
    */
   async parseMoneygramEnvois(filePath) {
     const workbook = new ExcelJS.Workbook();
@@ -630,55 +799,66 @@ class ImportHandler {
 
     const transactions = [];
     let currentAgence = null;
-    let currentAgentName = null;
+    let currentTypeOperation = 'ENVOI'; // Par défaut ENVOI
 
     worksheet.eachRow((row, rowNumber) => {
       const col1 = row.getCell(1).value;
+      const col1Str = col1 ? col1.toString() : '';
 
-      // Détecter l'agence: chercher les patterns d'agence
-      // Patterns possibles:
-      // - "MCTV - CALTEX (73936897)" (sans "- MCTV" à la fin)
-      // - "DAHALANI GENERATION.SARL - MCTV (74046472)" (avec "- MCTV")
-      // - Toute ligne avec MCTV et un numéro entre parenthèses
-      if (col1 && (col1.toString().includes('MCTV') || col1.toString().includes('- MCTV'))) {
-        // Ignorer les lignes qui ne sont pas des agences
-        const col1Str = col1.toString();
-        if (col1Str.includes('Détails des envois') || col1Str.includes('Rapport') || col1Str.includes('Total')) {
+      // Détecter le type d'opération (ENVOI ou RÉCEPTION)
+      if (col1Str.includes('Détails des envois') || col1Str.includes('DÉTAILS DES ENVOIS')) {
+        currentTypeOperation = 'ENVOI';
+        console.log(`  📤 Section ENVOIS détectée ligne ${rowNumber}`);
+        return;
+      }
+      if (col1Str.includes('DÉTAILS DES RÉCEPTIONS') || col1Str.includes('Détails des réceptions')) {
+        currentTypeOperation = 'PAIEMENT';
+        console.log(`  📥 Section RÉCEPTIONS détectée ligne ${rowNumber}`);
+        return;
+      }
+
+      // Détecter l'agence: ligne avec nom + numéro entre parenthèses
+      // Ex: "COMOROS ENTREPRENEURSHIP CORPORATION(CEN (74119312)" ou "MCTV - CALTEX (73936897)"
+      if (col1Str.match(/\(\d+\)/)) {
+        // Ignorer les lignes de titre
+        if (col1Str.includes('Détails') || col1Str.includes('DÉTAILS') || col1Str.includes('Rapport') || col1Str.includes('Total')) {
           return;
         }
 
-        // Si la ligne a un numéro entre parenthèses, c'est probablement une agence
-        if (col1Str.match(/\(\d+\)/)) {
-          // Utiliser la fonction de mapping par nom
-          const extractedCode = extractAgencyCodeFromName(col1Str);
-          if (extractedCode) {
-            currentAgence = extractedCode;
-            // Extraire aussi le nom de l'agence pour l'utiliser comme nom d'agent par défaut
-            const nameMatch = col1Str.match(/^([^(]+?)(?:\s*\(\d+\))?$/);
-            if (nameMatch) {
-              currentAgentName = nameMatch[1].trim().replace(/\s*-\s*MCTV\s*$/, '');
-            }
-            console.log(`  📍 Agence détectée ligne ${rowNumber}: "${col1Str}" → Code: ${extractedCode}`);
-          } else {
-            // Si pas trouvé dans le mapping, essayer de détecter le code par défaut
-            console.log(`  ⚠️ Agence non reconnue ligne ${rowNumber}: "${col1Str}"`);
-            currentAgence = '001'; // Par défaut
-          }
+        const extractedCode = extractAgencyCodeFromName(col1Str);
+        if (extractedCode) {
+          currentAgence = extractedCode;
+          console.log(`  📍 Agence détectée ligne ${rowNumber}: "${col1Str}" → Code: ${extractedCode}`);
+        } else {
+          console.log(`  ⚠️ Agence non reconnue ligne ${rowNumber}: "${col1Str}"`);
+          currentAgence = '001'; // Par défaut
         }
+        return;
       }
 
       // Ligne de données: commence par une date au format "2025-Apr-29 17:45:59"
-      if (col1 && col1.toString().match(/\d{4}-[A-Za-z]{3}-\d{2}\s+\d{2}:\d{2}:\d{2}/)) {
-        const dateStr = col1.toString();
+      if (col1Str.match(/\d{4}-[A-Za-z]{3}-\d{2}\s+\d{2}:\d{2}:\d{2}/)) {
+        const dateStr = col1Str;
         const numRef = row.getCell(2).value;
-        const typeOffre = row.getCell(3).value;  // Type d'offre (colonne 3 - contient des codes comme 7044, 194)
-        const userId = row.getCell(4).value;      // Identifiant utilisateur (colonne 4 - le vrai code agent comme HSADJ00)
-        const pointDeVente = row.getCell(5).value; // ID point de vente (colonne 5)
-        // IMPORTANT: Dans les fichiers MoneyGram réels, la colonne 6 contient un identifiant (1,2,etc)
-        // et la colonne 7 contient le montant réel de la transaction
-        const identifiant = row.getCell(6).value;  // Colonne 6: identifiant/compteur (1, 2, etc.)
-        const montant = row.getCell(7).value;       // Colonne 7: montant réel de la transaction
-        const frais = row.getCell(8).value;         // Colonne 8: frais/commission (si disponible)
+
+        // MAPPING DIFFÉRENT selon type opération
+        let userId, montantHT, frais, total;
+
+        if (currentTypeOperation === 'ENVOI') {
+          // ENVOIS: 8 colonnes
+          // Col4: ID utilisateur, Col6: Montant HT, Col7: Frais, Col8: Total TTC
+          userId = row.getCell(4).value;
+          montantHT = row.getCell(6).value;  // Montant HT (utilisé pour MONTANT)
+          frais = row.getCell(7).value;
+          total = row.getCell(8).value;      // Total TTC (pour validation uniquement)
+        } else {
+          // RÉCEPTIONS: 9 colonnes (colonne vide en col3)
+          // Col5: ID utilisateur, Col7: Montant = Total (frais=0), Col8: Frais, Col9: Total
+          userId = row.getCell(5).value;
+          montantHT = row.getCell(7).value;  // Montant = Total (car frais=0)
+          frais = row.getCell(8).value;
+          total = row.getCell(9).value;      // Total (même valeur que montantHT)
+        }
 
         // Parser la date
         const date = new Date(dateStr.replace(/-([A-Za-z]{3})-/, (m, month) => {
@@ -686,46 +866,29 @@ class ImportHandler {
           return `-${String(months[month]+1).padStart(2,'0')}-`;
         }));
 
-        if (numRef && montant) {
-          // Déterminer le code agent depuis la colonne 4 (userId)
-          let codeAgent = 'INCONNU';
+        if (numRef && montantHT) {
+          // Stocker le code agent EXACTEMENT tel qu'il est dans le fichier
+          const codeAgentBrut = userId ? userId.toString().trim() : 'INCONNU';
 
-          // Utiliser userId (colonne 4) qui contient le vrai code agent (ex: HSADJ00, 194HST00, etc.)
-          if (userId) {
-            codeAgent = userId.toString().trim().substring(0, 50);
-          }
-          // Si pas de userId, utiliser le nom de l'agence courante comme fallback
-          else if (currentAgentName) {
-            // Créer un code agent basé sur l'agence
-            // Ex: "DAHALANI GENERATION.SARL" → "DAHALANI"
-            const simpleName = currentAgentName
-              .replace(/\.SARL/gi, '')
-              .replace(/\.SARLU/gi, '')
-              .replace(/SARL/gi, '')
-              .replace(/\./g, '')
-              .split(' ')[0]
-              .toUpperCase();
-            codeAgent = simpleName.substring(0, 50) || 'AGENCE' + currentAgence;
-          }
-
-          // Pour les envois MoneyGram, on a les informations minimales:
-          // - Pas de nom d'expéditeur (c'est l'agence qui envoie)
-          // - Pas de nom de bénéficiaire dans ce format
-          // On peut éventuellement utiliser le type d'offre comme info supplémentaire
+          // Calculer le montant total TTC
+          const montantHTParsed = Math.abs(parseFloat(montantHT) || 0);
+          const fraisParsed = Math.abs(parseFloat(frais) || 0);
+          const totalTTC = Math.abs(parseFloat(total) || 0);  // Lire directement le total du fichier
 
           transactions.push({
             numero: parseInt(numRef) || 0,
             codeEnvoi: numRef.toString().trim(),
             partenaire: 'MONEYGRAM',
-            montant: Math.abs(parseFloat(montant) || 0),
-            commission: Math.abs(parseFloat(frais) || 0),
+            montant: montantHTParsed,  // MONTANT HT (col6 pour ENVOI, col7 pour RÉCEPTION)
+            commission: fraisParsed,   // Frais/Commission
             taxe: 0,
-            effectuePar: codeAgent,
+            montantTotal: totalTTC,    // TOTAL TTC (col8 pour ENVOI, col9 pour RÉCEPTION)
+            effectuePar: codeAgentBrut,  // Code agent BRUT du fichier
             dateOperation: date,
-            beneficiaire: (typeOffre ? typeOffre.toString() : '').substring(0, 250), // Utiliser type d'offre comme info
-            expediteur: currentAgentName || '', // L'agence est l'expéditeur pour les envois
+            beneficiaire: '',
+            expediteur: '',
             codeAgence: currentAgence || '001',
-            typeOperation: 'ENVOI'
+            typeOperation: currentTypeOperation
           });
         }
       }
@@ -739,11 +902,109 @@ class ImportHandler {
   }
 
   /**
-   * Parse fichier MoneyGram CSV (Format Envois)
+   * Parse fichier MoneyGram Paiements (Format "DÉTAILS DES RÉCEPTIONS")
+   * Structure:
+   * - Ligne 1: Nom agence (ex: "MAGASIN DJANATHANE - MCTV (74719893)")
+   * - Ligne 2: "DÉTAILS DES RÉCEPTIONS - KMF"
+   * - Ligne 3: En-têtes (Heure et date | Num Réf | code d'autorisation | Identifiant d'utilisateur | ID point de vente | Montant | Frais | Total)
+   * - Ligne 4+: Données transactions
+   */
+  async parseMoneygramPaiements(filePath) {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(filePath);
+    const worksheet = workbook.worksheets[0];
+
+    const transactions = [];
+    let currentAgence = null;
+
+    // Extraire l'agence de la première ligne
+    const firstRow = worksheet.getRow(1).getCell(1).value;
+    if (firstRow) {
+      const agencyLine = firstRow.toString();
+      // Utiliser la fonction de mapping par nom
+      const extractedCode = extractAgencyCodeFromName(agencyLine);
+      if (extractedCode) {
+        currentAgence = extractedCode;
+        console.log(`  📍 Agence détectée: "${agencyLine}" → Code: ${extractedCode}`);
+      } else {
+        // Si pas trouvé dans le mapping, essayer de détecter le code par défaut
+        console.log(`  ⚠️ Agence non reconnue: "${agencyLine}"`);
+        currentAgence = '001'; // Par défaut
+      }
+    }
+
+    // Parser les données à partir de la ligne 4
+    worksheet.eachRow((row, rowNumber) => {
+      // Ignorer les 3 premières lignes (agence, titre, en-têtes)
+      if (rowNumber <= 3) return;
+
+      const dateStr = row.getCell(1).value;      // Heure et date (locales)
+      const numRef = row.getCell(2).value;       // Num Réf
+      const codeAuth = row.getCell(3).value;     // code d'autorisation
+      const userId = row.getCell(4).value;       // Identifiant d'utilisateur (code agent)
+      const pointDeVente = row.getCell(5).value; // ID de point de vente
+      const montant = row.getCell(6).value;      // Montant
+      const frais = row.getCell(7).value;        // Frais
+      const total = row.getCell(8).value;        // Total
+
+      // Vérifier que c'est une ligne de données valide
+      if (!dateStr || !numRef || !montant) return;
+
+      // Parser la date (format: "2025-Apr-17 08:47:53")
+      let parsedDate = new Date();
+      if (dateStr instanceof Date) {
+        parsedDate = dateStr;
+      } else {
+        const dateString = dateStr.toString();
+        // Format avec mois abrégé: YYYY-Mon-DD HH:mm:ss
+        if (dateString.match(/^\d{4}-[A-Za-z]{3}-\d{2}/)) {
+          parsedDate = new Date(dateString.replace(/-([A-Za-z]{3})-/, (m, month) => {
+            const months = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
+            return `-${String(months[month]+1).padStart(2,'0')}-`;
+          }));
+        }
+      }
+
+      // Parser les montants (négatifs pour les paiements)
+      const montantValue = Math.abs(parseFloat(montant) || 0);
+      const fraisValue = Math.abs(parseFloat(frais) || 0);
+
+      // Déterminer le code agent
+      let codeAgent = 'INCONNU';
+      if (userId) {
+        codeAgent = userId.toString().trim().substring(0, 50);
+      }
+
+      transactions.push({
+        numero: parseInt(codeAuth) || 0, // Utiliser code d'autorisation comme numéro
+        codeEnvoi: numRef.toString().trim(),
+        partenaire: 'MONEYGRAM',
+        montant: montantValue,
+        commission: fraisValue,
+        taxe: 0,
+        effectuePar: codeAgent,
+        dateOperation: parsedDate,
+        beneficiaire: '', // Pas de bénéficiaire dans ce format
+        expediteur: '',   // Pas d'expéditeur dans ce format
+        codeAgence: currentAgence || '001',
+        typeOperation: 'PAIEMENT'
+      });
+    });
+
+    return {
+      type: 'MONEYGRAM_PAIEMENTS',
+      transactions,
+      count: transactions.length
+    };
+  }
+
+  /**
+   * Parse fichier MoneyGram CSV (Format standard et avec colonnes additionnelles)
    * Formats supportés:
-   * 1. Français: Heure et date (locales),Num Réf,Type d'offre,Identifiant d'utilisateur,ID de point de vente,Montant,Frais,Total
-   * 2. Anglais: Date/Time,Reference Number,Offer Type,User ID,POS ID,Amount,Fees,Total
-   * Note: MoneyGram n'inclut pas les noms expéditeur/bénéficiaire dans ce format
+   * 1. Standard: Date/Time,Reference Number,Sender Name,Receiver Name,Amount,Commission,etc.
+   * 2. Envois: Heure et date,Num Réf,Type d'offre,ID utilisateur,Montant,Frais,etc.
+   * 3. Paiements: MTCN,Sender Name,Receiver Name,Principal Amount Paid Out,Commission,Date/Time Paid,Operator
+   * Note: Détection automatique du format basée sur les colonnes présentes
    */
   async parseMoneygramCSV(filePath) {
     const content = await fs.readFile(filePath, 'utf-8');
@@ -772,143 +1033,267 @@ class ImportHandler {
       console.warn('Avertissements de parsing CSV:', parseResult.errors);
     }
 
-    // Mapper les noms de colonnes pour MoneyGram (format Envois)
-    const columnMappings = {
-      date: ['Heure et date (locales)', 'Heure et date', 'Date/Time', 'Date and Time', 'DateTime'],
-      reference: ['Num Réf', 'Numéro Référence', 'Reference Number', 'Ref Number', 'Ref'],
-      offerType: ['Type d\'offre', 'Type offre', 'Offer Type', 'Offer', 'Type'],
-      userId: ['Identifiant d\'utilisateur', 'Identifiant utilisateur', 'User ID', 'User', 'Agent'],
-      posId: ['ID de point de vente', 'Point de vente', 'POS ID', 'Point of Sale', 'POS'],
-      amount: ['Montant', 'Amount', 'Principal'],
-      fees: ['Frais', 'Fees', 'Commission', 'Charges'],
-      total: ['Total', 'Total Amount', 'Grand Total']
-    };
+    // Déterminer le type de format basé sur les colonnes présentes
+    const headers = Object.keys(parseResult.data[0] || {});
+    const hasReceiver = headers.some(h => h && h.toLowerCase().includes('receiver'));
+    const hasSender = headers.some(h => h && h.toLowerCase().includes('sender'));
+    const hasMTCN = headers.some(h => h && h.toUpperCase() === 'MTCN');
+    const hasOperator = headers.some(h => h && h.toLowerCase().includes('operator'));
 
-    // Fonction pour trouver la colonne correspondante
-    const findColumn = (row, mappings) => {
-      for (const key of Object.keys(row)) {
-        const normalizedKey = key.trim().toLowerCase();
-        for (const mapping of mappings) {
-          if (normalizedKey.includes(mapping.toLowerCase())) {
-            return row[key];
-          }
-        }
-      }
-      return null;
-    };
+    // Format détecté: Paiements (avec Sender/Receiver)
+    if (hasMTCN && hasSender && hasReceiver) {
+      console.log('📊 Format détecté: MoneyGram Paiements (MTCN/Sender/Receiver)');
 
-    // Parser chaque ligne
-    for (const row of parseResult.data) {
-      const reference = findColumn(row, columnMappings.reference);
-      const amount = findColumn(row, columnMappings.amount);
-      const dateStr = findColumn(row, columnMappings.date);
-      const total = findColumn(row, columnMappings.total);
+      // Mapper les colonnes pour format Paiements
+      const columnMappings = {
+        mtcn: ['MTCN', 'Reference Number', 'Num Réf'],
+        sender: ['Sender Name', 'Sender', 'Expéditeur'],
+        receiver: ['Receiver Name', 'Receiver', 'Beneficiary', 'Bénéficiaire'],
+        amount: ['Principal Amount Paid Out', 'Amount', 'Montant', 'Principal'],
+        commission: ['Commission', 'Fees', 'Frais'],
+        date: ['Date/Time Paid', 'Date/Time', 'Date', 'Heure et date'],
+        operator: ['Operator', 'User', 'Agent', 'Effectué par'],
+        agency: ['Agency', 'Agence', 'Code Agence'] // Colonne optionnelle
+      };
 
-      // Vérifier les champs requis - utiliser amount (montant principal) pas le total
-      if (!reference || !amount) continue;
-
-      // Parser le montant principal (sans les frais)
-      let montantValue = 0;
-      if (typeof amount === 'number') {
-        montantValue = Math.abs(amount);
-      } else if (typeof amount === 'string') {
-        // Gérer les formats comme "1,234,567.89" (anglais) ou "1 234 567,89" (français)
-        let cleanAmount = amount.replace(/[^\d,.-]/g, '');
-
-        // Déterminer si c'est un format français (virgule comme séparateur décimal)
-        // ou anglais (point comme séparateur décimal)
-        const lastComma = cleanAmount.lastIndexOf(',');
-        const lastDot = cleanAmount.lastIndexOf('.');
-
-        if (lastComma > lastDot) {
-          // Format français: virgule est le séparateur décimal
-          cleanAmount = cleanAmount.replace(/\./g, '').replace(',', '.');
-        } else {
-          // Format anglais: point est le séparateur décimal
-          cleanAmount = cleanAmount.replace(/,/g, '');
-        }
-
-        montantValue = Math.abs(parseFloat(cleanAmount) || 0);
-      }
-
-      // Parser les frais (commission)
-      let commissionValue = 0;
-      const fees = findColumn(row, columnMappings.fees);
-      if (fees) {
-        if (typeof fees === 'number') {
-          commissionValue = Math.abs(fees);
-        } else if (typeof fees === 'string') {
-          // Même logique que pour le montant
-          let cleanCommission = fees.replace(/[^\d,.-]/g, '');
-          const lastComma = cleanCommission.lastIndexOf(',');
-          const lastDot = cleanCommission.lastIndexOf('.');
-
-          if (lastComma > lastDot) {
-            cleanCommission = cleanCommission.replace(/\./g, '').replace(',', '.');
-          } else {
-            cleanCommission = cleanCommission.replace(/,/g, '');
-          }
-
-          commissionValue = Math.abs(parseFloat(cleanCommission) || 0);
-        }
-      }
-
-      // Parser la date
-      let dateOperation = new Date();
-      if (dateStr) {
-        if (dateStr instanceof Date) {
-          dateOperation = dateStr;
-        } else {
-          // Essayer plusieurs formats de date
-          const dateString = dateStr.toString();
-
-          // Format: DD/MM/YYYY HH:mm:ss ou MM/DD/YYYY HH:mm:ss
-          const dateMatch = dateString.match(/(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})\s*(\d{1,2}:\d{2}(?::\d{2})?)?/);
-          if (dateMatch) {
-            const day = parseInt(dateMatch[1]);
-            const month = parseInt(dateMatch[2]);
-            const year = parseInt(dateMatch[3]);
-            const time = dateMatch[4] || '00:00';
-            const [hours, minutes] = time.split(':').map(Number);
-
-            // Essayer d'abord format DD/MM/YYYY
-            if (month <= 12) {
-              dateOperation = new Date(year, month - 1, day, hours || 0, minutes || 0);
-            } else if (day <= 12) {
-              // Sinon essayer MM/DD/YYYY
-              dateOperation = new Date(year, day - 1, month, hours || 0, minutes || 0);
+      // Fonction pour trouver la colonne correspondante
+      const findColumn = (row, mappings) => {
+        for (const key of Object.keys(row)) {
+          const normalizedKey = key.trim().toLowerCase();
+          for (const mapping of mappings) {
+            if (normalizedKey.includes(mapping.toLowerCase())) {
+              return row[key];
             }
           }
-          // Format ISO: YYYY-MM-DD
-          else if (dateString.match(/^\d{4}-\d{2}-\d{2}/)) {
-            dateOperation = new Date(dateString);
+        }
+        return null;
+      };
+
+      // Parser chaque ligne pour format PAIEMENTS
+      for (const row of parseResult.data) {
+        const mtcn = findColumn(row, columnMappings.mtcn);
+        const sender = findColumn(row, columnMappings.sender);
+        const receiver = findColumn(row, columnMappings.receiver);
+        const amount = findColumn(row, columnMappings.amount);
+        const commission = findColumn(row, columnMappings.commission);
+        const dateStr = findColumn(row, columnMappings.date);
+        const operator = findColumn(row, columnMappings.operator);
+        const agency = findColumn(row, columnMappings.agency); // Optionnel
+
+        // Vérifier les champs requis
+        if (!mtcn || !amount) continue;
+
+        // Parser le montant
+        let montantValue = 0;
+        if (typeof amount === 'number') {
+          montantValue = Math.abs(amount);
+        } else if (typeof amount === 'string') {
+          // Gérer les formats avec virgules et points
+          let cleanAmount = amount.replace(/[^\d,.-]/g, '');
+          const lastComma = cleanAmount.lastIndexOf(',');
+          const lastDot = cleanAmount.lastIndexOf('.');
+
+          if (lastComma > lastDot) {
+            // Format français: virgule est le séparateur décimal
+            cleanAmount = cleanAmount.replace(/\./g, '').replace(',', '.');
+          } else {
+            // Format anglais: point est le séparateur décimal
+            cleanAmount = cleanAmount.replace(/,/g, '');
+          }
+          montantValue = Math.abs(parseFloat(cleanAmount) || 0);
+        }
+
+        // Parser la commission
+        let commissionValue = 0;
+        if (commission) {
+          if (typeof commission === 'number') {
+            commissionValue = Math.abs(commission);
+          } else if (typeof commission === 'string') {
+            let cleanCommission = commission.replace(/[^\d,.-]/g, '');
+            const lastComma = cleanCommission.lastIndexOf(',');
+            const lastDot = cleanCommission.lastIndexOf('.');
+
+            if (lastComma > lastDot) {
+              cleanCommission = cleanCommission.replace(/\./g, '').replace(',', '.');
+            } else {
+              cleanCommission = cleanCommission.replace(/,/g, '');
+            }
+            commissionValue = Math.abs(parseFloat(cleanCommission) || 0);
           }
         }
+
+        // Parser la date
+        let dateOperation = new Date();
+        if (dateStr) {
+          if (dateStr instanceof Date) {
+            dateOperation = dateStr;
+          } else {
+            const dateString = dateStr.toString();
+            // Format: DD/MM/YYYY HH:mm:ss ou MM/DD/YYYY HH:mm:ss
+            const dateMatch = dateString.match(/(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})\s*(\d{1,2}:\d{2}(?::\d{2})?)?/);
+            if (dateMatch) {
+              const day = parseInt(dateMatch[1]);
+              const month = parseInt(dateMatch[2]);
+              const year = parseInt(dateMatch[3]);
+              const time = dateMatch[4] || '00:00';
+              const [hours, minutes] = time.split(':').map(Number);
+
+              // Essayer format DD/MM/YYYY (plus courant aux Comores)
+              if (month <= 12) {
+                dateOperation = new Date(year, month - 1, day, hours || 0, minutes || 0);
+              }
+            }
+          }
+        }
+
+        // Extraire le code agence si la colonne Agency existe
+        let codeAgence = '001'; // Par défaut
+        if (agency) {
+          // Si c'est une ligne avec nom d'agence style "MCTV - CALTEX (73936897)"
+          const extractedCode = extractAgencyCodeFromName(agency.toString());
+          if (extractedCode) {
+            codeAgence = extractedCode;
+          }
+        }
+
+        transactions.push({
+          numero: 0, // Sera généré par la DB
+          codeEnvoi: mtcn.toString().trim(),
+          partenaire: 'MONEYGRAM',
+          montant: montantValue,
+          commission: commissionValue,
+          taxe: 0,
+          effectuePar: operator ? operator.toString().substring(0, 50) : 'INCONNU',
+          dateOperation: dateOperation,
+          beneficiaire: receiver ? receiver.toString().substring(0, 250) : '',
+          expediteur: sender ? sender.toString().substring(0, 250) : '',
+          codeAgence: codeAgence,
+          typeOperation: 'PAIEMENT'
+        });
       }
 
-      // Récupérer les autres champs MoneyGram
-      const userId = findColumn(row, columnMappings.userId) || 'INCONNU';
-      const posId = findColumn(row, columnMappings.posId) || '';
-      const offerType = findColumn(row, columnMappings.offerType) || '';
+    } else {
+      // Format ENVOIS (sans Sender/Receiver mais avec Type d'offre)
+      console.log('📊 Format détecté: MoneyGram Envois (sans expéditeur/bénéficiaire)');
 
-      // Déterminer le code agence (MoneyGram CSV n'inclut pas l'agence, sera déterminé par contexte)
-      // On pourrait éventuellement utiliser le POS ID pour mapper à une agence
-      let codeAgence = '001'; // Par défaut
+      // Mapper les colonnes pour format Envois
+      const columnMappings = {
+        date: ['Heure et date (locales)', 'Heure et date', 'Date/Time', 'Date and Time'],
+        reference: ['Num Réf', 'Numéro Référence', 'Reference Number', 'Ref Number'],
+        offerType: ['Type d\'offre', 'Type offre', 'Offer Type', 'Offer'],
+        userId: ['Identifiant d\'utilisateur', 'Identifiant utilisateur', 'User ID', 'User'],
+        posId: ['ID de point de vente', 'Point de vente', 'POS ID', 'Point of Sale'],
+        amount: ['Montant', 'Amount', 'Principal'],
+        fees: ['Frais', 'Fees', 'Commission'],
+        total: ['Total', 'Total Amount', 'Grand Total']
+      };
 
-      transactions.push({
-        numero: 0, // Sera généré par la DB
-        codeEnvoi: reference.toString().trim(),
-        partenaire: 'MONEYGRAM',
-        montant: montantValue,
-        commission: commissionValue,
-        taxe: 0,
-        effectuePar: userId.toString().substring(0, 50),
-        dateOperation: dateOperation,
-        beneficiaire: offerType.toString().substring(0, 250), // Type d'offre comme info supplémentaire
-        expediteur: posId.toString().substring(0, 250), // POS ID comme info supplémentaire
-        codeAgence: codeAgence,
-        typeOperation: 'ENVOI' // MoneyGram CSV est pour les envois
-      });
+      // Fonction pour trouver la colonne correspondante
+      const findColumn = (row, mappings) => {
+        for (const key of Object.keys(row)) {
+          const normalizedKey = key.trim().toLowerCase();
+          for (const mapping of mappings) {
+            if (normalizedKey.includes(mapping.toLowerCase())) {
+              return row[key];
+            }
+          }
+        }
+        return null;
+      };
+
+      // Parser chaque ligne pour format ENVOIS
+      for (const row of parseResult.data) {
+        const reference = findColumn(row, columnMappings.reference);
+        const amount = findColumn(row, columnMappings.amount);
+        const dateStr = findColumn(row, columnMappings.date);
+
+        // Vérifier les champs requis
+        if (!reference || !amount) continue;
+
+        // Parser le montant
+        let montantValue = 0;
+        if (typeof amount === 'number') {
+          montantValue = Math.abs(amount);
+        } else if (typeof amount === 'string') {
+          let cleanAmount = amount.replace(/[^\d,.-]/g, '');
+          const lastComma = cleanAmount.lastIndexOf(',');
+          const lastDot = cleanAmount.lastIndexOf('.');
+
+          if (lastComma > lastDot) {
+            cleanAmount = cleanAmount.replace(/\./g, '').replace(',', '.');
+          } else {
+            cleanAmount = cleanAmount.replace(/,/g, '');
+          }
+          montantValue = Math.abs(parseFloat(cleanAmount) || 0);
+        }
+
+        // Parser les frais
+        let commissionValue = 0;
+        const fees = findColumn(row, columnMappings.fees);
+        if (fees) {
+          if (typeof fees === 'number') {
+            commissionValue = Math.abs(fees);
+          } else if (typeof fees === 'string') {
+            let cleanCommission = fees.replace(/[^\d,.-]/g, '');
+            const lastComma = cleanCommission.lastIndexOf(',');
+            const lastDot = cleanCommission.lastIndexOf('.');
+
+            if (lastComma > lastDot) {
+              cleanCommission = cleanCommission.replace(/\./g, '').replace(',', '.');
+            } else {
+              cleanCommission = cleanCommission.replace(/,/g, '');
+            }
+            commissionValue = Math.abs(parseFloat(cleanCommission) || 0);
+          }
+        }
+
+        // Parser la date
+        let dateOperation = new Date();
+        if (dateStr) {
+          if (dateStr instanceof Date) {
+            dateOperation = dateStr;
+          } else {
+            const dateString = dateStr.toString();
+            // Format: YYYY-Apr-DD HH:mm:ss ou standard
+            if (dateString.match(/^\d{4}-[A-Za-z]{3}-\d{2}/)) {
+              dateOperation = new Date(dateString.replace(/-([A-Za-z]{3})-/, (m, month) => {
+                const months = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
+                return `-${String(months[month]+1).padStart(2,'0')}-`;
+              }));
+            } else {
+              // Format DD/MM/YYYY
+              const dateMatch = dateString.match(/(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})\s*(\d{1,2}:\d{2}(?::\d{2})?)?/);
+              if (dateMatch) {
+                const day = parseInt(dateMatch[1]);
+                const month = parseInt(dateMatch[2]);
+                const year = parseInt(dateMatch[3]);
+                const time = dateMatch[4] || '00:00';
+                const [hours, minutes] = time.split(':').map(Number);
+                dateOperation = new Date(year, month - 1, day, hours || 0, minutes || 0);
+              }
+            }
+          }
+        }
+
+        // Récupérer les autres champs
+        const userId = findColumn(row, columnMappings.userId) || 'INCONNU';
+        const offerType = findColumn(row, columnMappings.offerType) || '';
+
+        transactions.push({
+          numero: 0, // Sera généré par la DB
+          codeEnvoi: reference.toString().trim(),
+          partenaire: 'MONEYGRAM',
+          montant: montantValue,
+          commission: commissionValue,
+          taxe: 0,
+          effectuePar: userId.toString().substring(0, 50),
+          dateOperation: dateOperation,
+          beneficiaire: offerType.toString().substring(0, 250), // Type d'offre
+          expediteur: '', // Pas d'expéditeur dans ce format
+          codeAgence: '001', // Par défaut, sera déterminé par contexte
+          typeOperation: 'ENVOI'
+        });
+      }
     }
 
     return {
@@ -1258,13 +1643,16 @@ la
         result = await this.parseMoneygramCSV(filePath);
         break;
 
-      case 'MONEYGRAM_DETAIL':
-        result = await this.parseMoneygramDetail(filePath);
+      case 'MONEYGRAM_PAIEMENTS':
+        result = await this.parseMoneygramPaiements(filePath);
         break;
 
       case 'RIA_DETAIL':
+        result = await this.parseRiaReportDetail(filePath);
+        break;
+
       case 'RIA_CSV':
-        result = await this.parseRiaDetail(filePath);
+        result = await this.parseRiaCSV(filePath);
         break;
 
       case 'MONEYGRAM_ENVOIS':
@@ -1359,6 +1747,9 @@ la
           continue;
         }
 
+        // Calculer le montant total : utiliser trans.montantTotal si fourni, sinon montant + taxe
+        const montantTotal = trans.montantTotal !== undefined ? trans.montantTotal : (trans.montant + trans.taxe);
+
         // Insérer la transaction
         await this.pool.request()
           .input('numero', sql.Numeric(20, 0), trans.numero)
@@ -1373,7 +1764,7 @@ la
           .input('expediteur', sql.VarChar, trans.expediteur || '')
           .input('codeAgence', sql.VarChar, trans.codeAgence || agenceId)
           .input('typeOp', sql.VarChar, trans.typeOperation)
-          .input('montantTotal', sql.Decimal(18, 2), trans.montant + trans.taxe)
+          .input('montantTotal', sql.Decimal(18, 2), montantTotal)
           .query(`
             INSERT INTO INFOSTRANSFERTPARTENAIRES
             (NUMERO, CODEENVOI, PARTENAIRETRANSF, MONTANT, COMMISSION, TAXES,

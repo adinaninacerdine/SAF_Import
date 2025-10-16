@@ -52,11 +52,21 @@ router.get('/known', authMiddleware, async (req, res) => {
   try {
     const pool = req.app.locals.pool;
 
+    // Solution: Limiter les codes affichés aux 10 premiers pour éviter le dépassement de 8000 bytes
+    // On garde le compteur total nb_codes pour l'information
     const knownAgents = await pool.request().query(`
       SELECT
         am.agent_unique_id,
         am.agent_nom,
-        STRING_AGG(ac.code_user, ', ') as codes,
+        (
+          SELECT STRING_AGG(code_user, ', ')
+          FROM (
+            SELECT TOP 10 code_user
+            FROM tm_agent_codes
+            WHERE agent_unique_id = am.agent_unique_id
+            ORDER BY code_user
+          ) sub
+        ) as codes_sample,
         COUNT(DISTINCT ac.code_user) as nb_codes
       FROM tm_agent_mapping am
       LEFT JOIN tm_agent_codes ac ON am.agent_unique_id = ac.agent_unique_id
