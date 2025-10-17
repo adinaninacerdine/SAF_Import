@@ -23,32 +23,70 @@ function reportsRoutes(authMiddleware) {
     }).format(Math.round(montant));
   };
 
-  // Générer rapport TXT (format original)
+  // Générer rapport TXT (format exact client)
   async function generateTXTReport(part, dateDebutObj, dateFinObj, agencesPrincipales, sousAgences) {
+    // Nom d'affichage du partenaire
+    const partenaireDisplay = part === 'MONEYGRAM' ? 'MoneyGram' :
+                              part === 'RIA' ? 'Ria' :
+                              part === 'GLOBAL' ? 'Global' : part;
+
     let rapport = '';
-    rapport += `Résumé des transactions pour ${part} (${formatDate(dateDebutObj)} --- ${formatDate(dateFinObj)})         Devise: KMF\n`;
-    rapport += '\n';
+    rapport += `Résumé des transactions pour ${partenaireDisplay} (${formatDate(dateDebutObj)} --- ${formatDate(dateFinObj)})         Devise: KMF`;
+
+    // Espaces selon format client
+    if (part === 'RIA') {
+      rapport += '                    \n';
+      rapport += '                     \n';
+    } else {
+      rapport += '                        \n';
+      rapport += '                         \n';
+    }
 
     // Section Agences MCTV
-    rapport += 'Agences MCTV\n';
-    rapport += 'Code    Nom    Usager    Envois    Paiements    Annulations    Comm.\n';
+    if (part === 'RIA') {
+      rapport += 'Agences MCTV                    \n';
+      // RIA n'a pas de colonne Comm. pour agences principales
+      rapport += 'Code    Nom    Usager    Envois    Paiements    Annulations\n';
+    } else {
+      rapport += 'Agences MCTV                        \n';
+      rapport += 'Code    Nom    Usager    Envois    Paiements    Annulations    Comm.\n';
+    }
 
     agencesPrincipales.forEach(row => {
-      rapport += `${row.Code}    ${row.Nom || ''}    ${row.Usager || ''}    ${Math.round(row.Envois)}    ${Math.round(row.Paiements)}    ${Math.round(row.Annulations)}    ${Math.round(row.Comm)}\n`;
+      if (part === 'RIA') {
+        rapport += `${row.Code}    ${row.Nom || ''}    ${row.Usager || ''}    ${Math.round(row.Envois)}    ${Math.round(row.Paiements)}    ${Math.round(row.Annulations)}\n`;
+      } else {
+        rapport += `${row.Code}    ${row.Nom || ''}    ${row.Usager || ''}    ${Math.round(row.Envois)}    ${Math.round(row.Paiements)}    ${Math.round(row.Annulations)}    ${Math.round(row.Comm)}\n`;
+      }
     });
 
     // Section Sous Agences
     if (sousAgences.length > 0) {
-      rapport += '\n';
-      rapport += 'Sous Agences\n';
-      rapport += 'Code    Nom    Envois    Paiements    Annulations    Comm.\n';
+      if (part === 'RIA') {
+        rapport += '                     \n';
+        rapport += 'Sous Agences                    \n';
+        rapport += 'Code    Nom    Envois    Paiements    Annulations    Comm.\n';
+      } else {
+        rapport += '                         \n';
+        rapport += 'Sous Agences                        \n';
+        rapport += 'Code    Nom    Envois    Paiements    Annulations    Comm.    \n';
+      }
 
       sousAgences.forEach(row => {
-        rapport += `${row.Code}    ${row.Nom || ''}    ${Math.round(row.Envois)}    ${Math.round(row.Paiements)}    ${Math.round(row.Annulations)}    ${Math.round(row.Comm)}\n`;
+        if (part === 'RIA') {
+          rapport += `${row.Code}    ${row.Nom || ''}    ${Math.round(row.Envois)}    ${Math.round(row.Paiements)}    ${Math.round(row.Annulations)}    ${Math.round(row.Comm)}\n`;
+        } else {
+          rapport += `${row.Code}    ${row.Nom || ''}    ${Math.round(row.Envois)}    ${Math.round(row.Paiements)}    ${Math.round(row.Annulations)}    ${Math.round(row.Comm)}    \n`;
+        }
       });
     }
 
-    rapport += '\n';
+    // Ligne finale
+    if (part === 'RIA') {
+      rapport += '                     \n';
+    } else {
+      rapport += '                         \n';
+    }
 
     const filename = `rapport_${part}_${formatDate(dateDebutObj).replace(/-/g, '')}_${formatDate(dateFinObj).replace(/-/g, '')}.txt`;
     const filePath = path.join(__dirname, filename);
@@ -414,6 +452,7 @@ function reportsRoutes(authMiddleware) {
             WHERE t.PARTENAIRETRANSF = @partenaire
               AND t.DATEOPERATION >= @dateDebut
               AND t.DATEOPERATION <= @dateFin
+              AND t.statut_validation = 'VALIDEE'
               AND TRY_CAST(t.CODEAGENCE AS INT) IS NOT NULL
               AND CAST(t.CODEAGENCE AS INT) >= 1
               AND CAST(t.CODEAGENCE AS INT) <= 20
@@ -451,6 +490,7 @@ function reportsRoutes(authMiddleware) {
             WHERE t.PARTENAIRETRANSF = @partenaire
               AND t.DATEOPERATION >= @dateDebut
               AND t.DATEOPERATION <= @dateFin
+              AND t.statut_validation = 'VALIDEE'
               AND TRY_CAST(t.CODEAGENCE AS INT) IS NOT NULL
               AND CAST(t.CODEAGENCE AS INT) >= 100
             GROUP BY
