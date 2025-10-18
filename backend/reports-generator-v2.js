@@ -28,7 +28,8 @@ class ReportsGeneratorV2 {
   formatMontant(montant, withSeparator = false) {
     const rounded = Math.round(montant);
     if (withSeparator) {
-      return new Intl.NumberFormat('fr-FR').format(rounded);
+      // Utiliser des espaces normaux au lieu d'espaces insécables pour compatibilité
+      return new Intl.NumberFormat('fr-FR').format(rounded).replace(/\u00A0/g, ' ');
     }
     return rounded;
   }
@@ -165,14 +166,14 @@ class ReportsGeneratorV2 {
       const code = row.Code;
       const nom = row.Nom || '';
       const usager = row.Usager || '';
-      const envois = this.formatMontant(row.Envois);
-      const paiements = this.formatMontant(row.Paiements);
-      const annulations = this.formatMontant(row.Annulations);
+      const envois = this.formatMontant(row.Envois, true);
+      const paiements = this.formatMontant(row.Paiements, true);
+      const annulations = this.formatMontant(row.Annulations, true);
 
       if (partenaire === 'RIA') {
         rapport += `${code}    ${nom}    ${usager}    ${envois}    ${paiements}    ${annulations}\n`;
       } else {
-        const comm = this.formatMontant(row.Comm);
+        const comm = this.formatMontant(row.Comm, true);
         rapport += `${code}    ${nom}    ${usager}    ${envois}    ${paiements}    ${annulations}    ${comm}\n`;
       }
     });
@@ -204,10 +205,10 @@ class ReportsGeneratorV2 {
       sousAgences.forEach(row => {
         const code = row.Code;
         const nom = row.Nom || '';
-        const envois = this.formatMontant(row.Envois);
-        const paiements = this.formatMontant(row.Paiements);
-        const annulations = this.formatMontant(row.Annulations);
-        const comm = this.formatMontant(row.Comm);
+        const envois = this.formatMontant(row.Envois, true);
+        const paiements = this.formatMontant(row.Paiements, true);
+        const annulations = this.formatMontant(row.Annulations, true);
+        const comm = this.formatMontant(row.Comm, true);
 
         if (partenaire === 'RIA') {
           rapport += `${code}    ${nom}    ${envois}    ${paiements}    ${annulations}    ${comm}\n`;
