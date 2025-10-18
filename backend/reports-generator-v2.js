@@ -163,18 +163,18 @@ class ReportsGeneratorV2 {
 
     // Données agences principales
     agencesPrincipales.forEach(row => {
-      const code = row.Code;
-      const nom = row.Nom || '';
-      const usager = row.Usager || '';
-      const envois = this.formatMontant(row.Envois, true);
-      const paiements = this.formatMontant(row.Paiements, true);
-      const annulations = this.formatMontant(row.Annulations, true);
+      const code = String(row.Code).padEnd(6);
+      const nom = String(row.Nom || '').padEnd(30);
+      const usager = String(row.Usager || '').padEnd(35);
+      const envois = String(this.formatMontant(row.Envois, true)).padStart(12);
+      const paiements = String(this.formatMontant(row.Paiements, true)).padStart(12);
+      const annulations = String(this.formatMontant(row.Annulations, true)).padStart(12);
 
       if (partenaire === 'RIA') {
-        rapport += `${code}    ${nom}    ${usager}    ${envois}    ${paiements}    ${annulations}\n`;
+        rapport += `${code}${nom}${usager}${envois}${paiements}${annulations}\n`;
       } else {
-        const comm = this.formatMontant(row.Comm, true);
-        rapport += `${code}    ${nom}    ${usager}    ${envois}    ${paiements}    ${annulations}    ${comm}\n`;
+        const comm = String(this.formatMontant(row.Comm, true)).padStart(12);
+        rapport += `${code}${nom}${usager}${envois}${paiements}${annulations}${comm}\n`;
       }
     });
 
@@ -203,17 +203,17 @@ class ReportsGeneratorV2 {
 
       // Données sous-agences
       sousAgences.forEach(row => {
-        const code = row.Code;
-        const nom = row.Nom || '';
-        const envois = this.formatMontant(row.Envois, true);
-        const paiements = this.formatMontant(row.Paiements, true);
-        const annulations = this.formatMontant(row.Annulations, true);
-        const comm = this.formatMontant(row.Comm, true);
+        const code = String(row.Code).padEnd(6);
+        const nom = String(row.Nom || '').padEnd(50);
+        const envois = String(this.formatMontant(row.Envois, true)).padStart(12);
+        const paiements = String(this.formatMontant(row.Paiements, true)).padStart(12);
+        const annulations = String(this.formatMontant(row.Annulations, true)).padStart(12);
+        const comm = String(this.formatMontant(row.Comm, true)).padStart(12);
 
         if (partenaire === 'RIA') {
-          rapport += `${code}    ${nom}    ${envois}    ${paiements}    ${annulations}    ${comm}\n`;
+          rapport += `${code}${nom}${envois}${paiements}${annulations}${comm}\n`;
         } else {
-          rapport += `${code}    ${nom}    ${envois}    ${paiements}    ${annulations}    ${comm}    \n`;
+          rapport += `${code}${nom}${envois}${paiements}${annulations}${comm}    \n`;
         }
       });
     }
