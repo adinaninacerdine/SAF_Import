@@ -45,7 +45,7 @@ class ReportsGeneratorV2 {
       .input('dateFin', sql.Date, dateFin)
       .query(`
         SELECT
-          t.CODEAGENCE as Code,
+          RIGHT('000' + CAST(t.CODEAGENCE AS VARCHAR), 3) as Code,
           a.DES_AGENCIA as Nom,
           COALESCE(NULLIF(am.agent_nom, ''), 'NON ASSIGNÉ') as Usager,
           ISNULL(SUM(CASE
@@ -59,7 +59,7 @@ class ReportsGeneratorV2 {
             THEN t.MONTANT ELSE 0 END), 0) as Annulations,
           ISNULL(SUM(t.COMMISSION), 0) as Comm
         FROM INFOSTRANSFERTPARTENAIRES t
-        LEFT JOIN CF.CF_AGENCIAS a ON t.CODEAGENCE = a.COD_AGENCIA
+        LEFT JOIN CF.CF_AGENCIAS a ON RIGHT('000' + CAST(t.CODEAGENCE AS VARCHAR), 3) = a.COD_AGENCIA
         LEFT JOIN tm_agent_mapping am ON t.AGENT_UNIQUE_ID = am.agent_unique_id
         WHERE t.PARTENAIRETRANSF = @partenaire
           AND t.DATEOPERATION >= @dateDebut
@@ -69,7 +69,7 @@ class ReportsGeneratorV2 {
           AND CAST(t.CODEAGENCE AS INT) >= 1
           AND CAST(t.CODEAGENCE AS INT) <= 20
         GROUP BY
-          t.CODEAGENCE,
+          RIGHT('000' + CAST(t.CODEAGENCE AS VARCHAR), 3),
           a.DES_AGENCIA,
           am.agent_nom
         HAVING (SUM(t.MONTANT) > 0 OR SUM(t.COMMISSION) > 0)
@@ -85,7 +85,7 @@ class ReportsGeneratorV2 {
       .input('dateFin', sql.Date, dateFin)
       .query(`
         SELECT
-          t.CODEAGENCE as Code,
+          CAST(t.CODEAGENCE AS VARCHAR) as Code,
           a.DES_AGENCIA as Nom,
           ISNULL(SUM(CASE
             WHEN t.TYPEOPERATION IN ('ENVOI AGENCE', 'ENVOI AGENT')
@@ -98,7 +98,7 @@ class ReportsGeneratorV2 {
             THEN t.MONTANT ELSE 0 END), 0) as Annulations,
           ISNULL(SUM(t.COMMISSION), 0) as Comm
         FROM INFOSTRANSFERTPARTENAIRES t
-        LEFT JOIN CF.CF_AGENCIAS a ON t.CODEAGENCE = a.COD_AGENCIA
+        LEFT JOIN CF.CF_AGENCIAS a ON CAST(t.CODEAGENCE AS VARCHAR) = a.COD_AGENCIA
         WHERE t.PARTENAIRETRANSF = @partenaire
           AND t.DATEOPERATION >= @dateDebut
           AND t.DATEOPERATION <= @dateFin
@@ -106,7 +106,7 @@ class ReportsGeneratorV2 {
           AND TRY_CAST(t.CODEAGENCE AS INT) IS NOT NULL
           AND CAST(t.CODEAGENCE AS INT) >= 100
         GROUP BY
-          t.CODEAGENCE,
+          CAST(t.CODEAGENCE AS VARCHAR),
           a.DES_AGENCIA
         HAVING (SUM(t.MONTANT) > 0 OR SUM(t.COMMISSION) > 0)
         ORDER BY
